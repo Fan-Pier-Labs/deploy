@@ -1,0 +1,1 @@
+- dont allow modifying dns records unless create resources is true
