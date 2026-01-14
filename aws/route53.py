@@ -77,7 +77,7 @@ def create_or_update_dns_record(route53_client, domain, target_value, record_typ
         target_value: The value to point to (e.g., CloudFront distribution domain or ALB DNS name)
         record_type: 'CNAME', 'A', or 'AAAA'
         ttl: TTL in seconds
-        allow_create: Whether to create the record if it doesn't exist
+        allow_create: Whether to create or modify DNS records. If False, will exit if record needs to be created or updated.
     """
     # Find the hosted zone
     hosted_zone_id, record_name, zone_name = find_hosted_zone(route53_client, domain)
@@ -105,6 +105,11 @@ def create_or_update_dns_record(route53_client, domain, target_value, record_typ
     existing_record = get_existing_record(route53_client, hosted_zone_id, full_record_name, record_type)
     
     if existing_record:
+        # Check if resource creation/modification is allowed
+        if not allow_create:
+            print(f"DNS record '{full_record_name}' exists but resource modification is disabled.")
+            sys.exit(1)
+        
         # Update existing record
         print(f"Updating existing {record_type} record: {full_record_name}")
         
@@ -230,6 +235,7 @@ def create_validation_record(route53_client, validation_record, allow_create=Fal
             existing = get_existing_record(route53_client, hosted_zone_id, full_record_name, record_type)
             
             if existing:
+                # Record already exists, no modification needed
                 print(f"Validation record already exists: {full_record_name}")
                 return
             
