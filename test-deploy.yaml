@@ -1,0 +1,11 @@
+platform: "s3"
+app_name: "test-site"
+aws:
+  profile: "personal"
+  region: "us-east-2"
+s3:
+  folder: "./test-site"
+  bucket_name: "test-fanpierlabs-com"  # Custom bucket name
+public:
+  domain: "test.fanpierlabs.com"
+allow_create: true

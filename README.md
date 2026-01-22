@@ -1,10 +1,10 @@
 # Unified Deployment Tool
 
-A unified deployment tool that supports deploying applications to **AWS Fargate**, **Fly.io**, or **Vercel** from a single configuration file. This tool simplifies multi-platform deployments by providing a consistent interface and configuration format across different cloud providers.
+A unified deployment tool that supports deploying applications to **AWS Fargate**, **Fly.io**, **Vercel**, or **AWS S3** from a single configuration file. This tool simplifies multi-platform deployments by providing a consistent interface and configuration format across different cloud providers.
 
 ## Features
 
-- **Multi-Platform Support**: Deploy to AWS Fargate, Fly.io, or Vercel with a single tool
+- **Multi-Platform Support**: Deploy to AWS Fargate, Fly.io, Vercel, or AWS S3 with a single tool
 - **YAML Configuration**: Simple, declarative configuration files
 - **Unified CLI**: Single entry point that routes to the appropriate platform
 - **Flexible Deployment Options**: Support for internal services, public web apps, and serverless deployments
@@ -37,7 +37,7 @@ bun install  # or npm install / yarn install
 1. Create a `deploy.yaml` configuration file in your project directory:
 
 ```yaml
-platform: "fargate"  # or "fly" or "vercel"
+platform: "fargate"  # or "fly", "vercel", or "s3"
 app_name: "my-app"
 aws:
   profile: "personal"
@@ -65,11 +65,12 @@ The tool uses YAML configuration files to define deployment settings. The `platf
 - `fargate`: Deploy to AWS Fargate (containerized workloads)
 - `fly`: Deploy to Fly.io (containerized workloads)
 - `vercel`: Deploy to Vercel (serverless/edge functions)
+- `s3`: Deploy static websites to AWS S3 with CloudFront
 
 ### Common Configuration Fields
 
 ```yaml
-platform: "fargate"  # Required: "fargate", "fly", or "vercel"
+platform: "fargate"  # Required: "fargate", "fly", "vercel", or "s3"
 app_name: "my-app"   # Required: Application name
 environment:         # Optional: Environment variables
   KEY1: "value1"
@@ -180,6 +181,44 @@ environment:
 bun run deploy -- --prod --yes --env NODE_ENV=production
 ```
 
+### AWS S3
+
+Deploy static websites to AWS S3 with CloudFront distribution and Route53 DNS.
+
+**Configuration:**
+```yaml
+platform: "s3"
+app_name: "my-static-site"
+aws:
+  profile: "personal"
+  region: "us-east-2"
+s3:
+  folder: "./dist"  # Path to folder containing static files (must have index.html)
+public:
+  domain: "app.example.com"
+allow_create: true
+```
+
+**Features:**
+- Automatic S3 bucket creation and configuration
+- Static website hosting setup
+- CloudFront distribution with 10-minute cache
+- Route53 DNS management
+- SSL certificate management (ACM)
+- Validates that `index.html` exists in the folder
+
+**Requirements:**
+- The specified folder must contain an `index.html` file
+- Folder path can be relative (to config file) or absolute
+
+**Command-Line Options:**
+```bash
+bun run deploy -- --allow-create --region us-east-2
+```
+
+**Architecture:**
+- Route53 → CloudFront (10 min cache) → S3 Bucket
+
 ## Usage
 
 ### Basic Deployment
@@ -227,10 +266,16 @@ deploy/
 │   ├── main.py
 │   ├── deploy.py
 │   └── config.py
-└── vercel/              # Vercel deployment module
+├── vercel/              # Vercel deployment module
+│   ├── main.py
+│   ├── deploy.py
+│   └── config.py
+└── s3/                  # AWS S3 static website deployment module
     ├── main.py
     ├── deploy.py
-    └── config.py
+    ├── config.py
+    ├── s3_bucket.py
+    └── cloudfront_s3.py
 ```
 
 ## Requirements

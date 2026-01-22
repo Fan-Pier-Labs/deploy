@@ -23,13 +23,13 @@ def load_config(config_file):
         # Platform is required
         if 'platform' not in config:
             print("Error: 'platform' is required in the configuration file")
-            print("Please specify 'platform: \"fargate\"', 'platform: \"fly\"', or 'platform: \"vercel\"'")
+            print("Please specify 'platform: \"fargate\"', 'platform: \"fly\"', 'platform: \"vercel\"', or 'platform: \"s3\"'")
             sys.exit(1)
         
         platform = config.get('platform', '').lower()
         
-        if platform not in ['fargate', 'fly', 'vercel']:
-            print(f"Error: Invalid platform '{platform}'. Must be 'fargate', 'fly', or 'vercel'")
+        if platform not in ['fargate', 'fly', 'vercel', 's3']:
+            print(f"Error: Invalid platform '{platform}'. Must be 'fargate', 'fly', 'vercel', or 's3'")
             sys.exit(1)
         
         return config, platform
@@ -39,7 +39,7 @@ def load_config(config_file):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Deploy app to Fargate, Fly.io, or Vercel')
+    parser = argparse.ArgumentParser(description='Deploy app to Fargate, Fly.io, Vercel, or S3')
     parser.add_argument('--config', type=str, default='deploy.yaml', 
                        help='Path to YAML configuration file (default: deploy.yaml)')
     
@@ -71,31 +71,16 @@ def main():
     # Route to appropriate deployment module
     if platform == 'fargate':
         from aws.main import main as aws_main
-        # Temporarily modify sys.argv to pass config to aws.main
-        original_argv = sys.argv[:]
-        sys.argv = [sys.argv[0], '--config', config_path]
-        try:
-            aws_main()
-        finally:
-            sys.argv = original_argv
+        aws_main(config_file=config_path)
     elif platform == 'fly':
         from fly.main import main as fly_main
-        # Temporarily modify sys.argv to pass config to fly.main
-        original_argv = sys.argv[:]
-        sys.argv = [sys.argv[0], '--config', config_path]
-        try:
-            fly_main()
-        finally:
-            sys.argv = original_argv
+        fly_main(config_file=config_path)
     elif platform == 'vercel':
         from vercel.main import main as vercel_main
-        # Temporarily modify sys.argv to pass config to vercel.main
-        original_argv = sys.argv[:]
-        sys.argv = [sys.argv[0], '--config', config_path]
-        try:
-            vercel_main()
-        finally:
-            sys.argv = original_argv
+        vercel_main(config_file=config_path)
+    elif platform == 's3':
+        from s3.main import main as s3_main
+        s3_main(config_file=config_path)
 
 
 if __name__ == "__main__":

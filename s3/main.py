@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-CLI entry point for Fly.io deployment.
+CLI entry point for AWS S3 static website deployment.
 """
 import sys
 from . import deploy, config
@@ -8,7 +8,7 @@ from . import deploy, config
 
 def main(config_file=None):
     """
-    Deploy to Fly.io using configuration from file.
+    Deploy to AWS S3 using configuration from file.
     
     Args:
         config_file: Path to YAML configuration file. If None, will try to get from sys.argv.
@@ -25,7 +25,7 @@ def main(config_file=None):
     config_dict = config.load_config(config_file)
     
     # Deploy with specified options
-    deploy.deploy_to_fly(config_dict=config_dict)
+    deploy.deploy_to_s3(config_dict=config_dict)
 
 
 if __name__ == "__main__":
