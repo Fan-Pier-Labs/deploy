@@ -314,6 +314,7 @@ def deploy_production_public_app(session, config, subnet_ids, security_group_id,
 def test_deployment_http_requests(public_config, params):
     """
     Test HTTP requests to the deployed domain to verify everything works.
+    Retries every 10 seconds for up to 10 minutes if checks fail.
     """
     domain = public_config['domain']
     mode = public_config.get('mode', 'production')
@@ -345,58 +346,77 @@ def test_deployment_http_requests(public_config, params):
     if '_cloudfront_domain' in params:
         test_urls.append(f"https://{params['_cloudfront_domain']}")
     
-    success_count = 0
     total_tests = len(test_urls)
+    max_retry_time = 600  # 10 minutes in seconds
+    retry_interval = 10  # 10 seconds
+    start_time = time.time()
+    attempt = 1
     
-    for url in test_urls:
-        print(f"\nTesting: {url}")
-        try:
-            # Create request with timeout
-            req = urllib.request.Request(url)
-            req.add_header('User-Agent', 'Deployment-Test/1.0')
-            
-            with urllib.request.urlopen(req, timeout=30) as response:
-                status_code = response.getcode()
-                content_length = response.headers.get('Content-Length', 'unknown')
-                content_type = response.headers.get('Content-Type', 'unknown')
+    while True:
+        print(f"\n--- Attempt {attempt} ---")
+        success_count = 0
+        
+        for url in test_urls:
+            print(f"\nTesting: {url}")
+            try:
+                # Create request with timeout
+                req = urllib.request.Request(url)
+                req.add_header('User-Agent', 'Deployment-Test/1.0')
                 
-                if 200 <= status_code < 400:
-                    print(f"  ✓ SUCCESS - Status: {status_code}")
-                    print(f"    Content-Type: {content_type}")
-                    print(f"    Content-Length: {content_length}")
-                    success_count += 1
-                else:
-                    print(f"  ⚠ WARNING - Status: {status_code}")
-                    print(f"    Content-Type: {content_type}")
-        except urllib.error.HTTPError as e:
-            # HTTP errors (4xx, 5xx) - might still indicate the service is up
-            print(f"  ⚠ HTTP Error: {e.code} {e.reason}")
-            if e.code < 500:
-                # 4xx errors mean the server is responding
-                print(f"    Server is responding (client error)")
-                success_count += 0.5  # Partial success
-        except urllib.error.URLError as e:
-            print(f"  ✗ FAILED - {e.reason}")
-            print(f"    This might be normal if DNS hasn't propagated yet")
-        except Exception as e:
-            print(f"  ✗ FAILED - {str(e)}")
-    
-    print("\n" + "-"*80)
-    print(f"Test Results: {success_count}/{total_tests} successful")
-    
-    if success_count >= total_tests * 0.5:
-        print("✓ Deployment appears to be working!")
-    elif success_count > 0:
-        print("⚠ Some tests failed - deployment may still be propagating")
+                with urllib.request.urlopen(req, timeout=30) as response:
+                    status_code = response.getcode()
+                    content_length = response.headers.get('Content-Length', 'unknown')
+                    content_type = response.headers.get('Content-Type', 'unknown')
+                    
+                    if 200 <= status_code < 400:
+                        print(f"  ✓ SUCCESS - Status: {status_code}")
+                        print(f"    Content-Type: {content_type}")
+                        print(f"    Content-Length: {content_length}")
+                        success_count += 1
+                    else:
+                        print(f"  ⚠ WARNING - Status: {status_code}")
+                        print(f"    Content-Type: {content_type}")
+            except urllib.error.HTTPError as e:
+                # HTTP errors (4xx, 5xx) - might still indicate the service is up
+                print(f"  ⚠ HTTP Error: {e.code} {e.reason}")
+                if e.code < 500:
+                    # 4xx errors mean the server is responding
+                    print(f"    Server is responding (client error)")
+                    success_count += 0.5  # Partial success
+            except urllib.error.URLError as e:
+                print(f"  ✗ FAILED - {e.reason}")
+                print(f"    This might be normal if DNS hasn't propagated yet")
+            except Exception as e:
+                print(f"  ✗ FAILED - {str(e)}")
+        
+        print("\n" + "-"*80)
+        print(f"Test Results: {success_count}/{total_tests} successful")
+        
+        # Check if tests passed
+        if success_count >= total_tests * 0.5:
+            print("✓ Deployment appears to be working!")
+            print("="*80 + "\n")
+            return
+        
+        # Check if we've exceeded the retry time limit
+        elapsed_time = time.time() - start_time
+        if elapsed_time >= max_retry_time:
+            print("✗ All tests failed after 10 minutes of retrying")
+            print("  Please check:")
+            print("  1. DNS propagation (can take a few minutes)")
+            print("  2. CloudFront deployment status (can take 15-20 minutes)")
+            print("  3. ECS service health and task status")
+            print("="*80 + "\n")
+            return
+        
+        # Wait before retrying
+        remaining_time = max_retry_time - elapsed_time
+        print(f"⚠ Some tests failed - retrying in {retry_interval} seconds...")
+        print(f"  (Will continue retrying for up to {int(remaining_time)} more seconds)")
         print("  CloudFront can take 15-20 minutes to fully deploy")
         print("  DNS propagation can take a few minutes")
-    else:
-        print("✗ All tests failed - please check:")
-        print("  1. DNS propagation (can take a few minutes)")
-        print("  2. CloudFront deployment status (can take 15-20 minutes)")
-        print("  3. ECS service health and task status")
-    
-    print("="*80 + "\n")
+        time.sleep(retry_interval)
+        attempt += 1
 
 
 def deploy_to_fargate(config_dict=None, **kwargs):

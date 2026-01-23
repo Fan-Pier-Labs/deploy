@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Unified deployment entry point.
-Routes to AWS Fargate, Fly.io, or Vercel based on configuration.
+Routes to AWS Fargate, Fly.io, or S3 based on configuration.
+Note: Vercel deployment is currently disabled and needs to be tested.
 """
 import sys
 import os
@@ -23,13 +24,15 @@ def load_config(config_file):
         # Platform is required
         if 'platform' not in config:
             print("Error: 'platform' is required in the configuration file")
-            print("Please specify 'platform: \"fargate\"', 'platform: \"fly\"', 'platform: \"vercel\"', or 'platform: \"s3\"'")
+            print("Please specify 'platform: \"fargate\"', 'platform: \"fly\"', or 'platform: \"s3\"'")
+            print("Note: 'platform: \"vercel\"' is currently disabled and needs to be tested before use.")
             sys.exit(1)
         
         platform = config.get('platform', '').lower()
         
         if platform not in ['fargate', 'fly', 'vercel', 's3']:
-            print(f"Error: Invalid platform '{platform}'. Must be 'fargate', 'fly', 'vercel', or 's3'")
+            print(f"Error: Invalid platform '{platform}'. Must be 'fargate', 'fly', or 's3'")
+            print("Note: 'vercel' is currently disabled and needs to be tested before use.")
             sys.exit(1)
         
         return config, platform
@@ -39,7 +42,7 @@ def load_config(config_file):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Deploy app to Fargate, Fly.io, Vercel, or S3')
+    parser = argparse.ArgumentParser(description='Deploy app to Fargate, Fly.io, or S3 (Vercel is currently disabled)')
     parser.add_argument('--config', type=str, default='deploy.yaml', 
                        help='Path to YAML configuration file (default: deploy.yaml)')
     
@@ -60,12 +63,19 @@ def main():
     # Load configuration and determine platform
     config, platform = load_config(config_path)
     
+    # Disable Vercel option - needs to be tested before it can be used
+    if platform == 'vercel':
+        print("Error: Vercel deployment is currently disabled")
+        print("The Vercel deployment option needs to be tested before it can be used.")
+        print("Please use 'platform: \"fargate\"', 'platform: \"fly\"', or 'platform: \"s3\"' instead.")
+        sys.exit(1)
+    
     # Validate fly platform doesn't support public domains
     if platform == 'fly':
         public_config = config.get('public')
         if public_config and public_config.get('domain'):
             print("Error: Fly.io deployment does not support public domains at this time")
-            print("Please remove the 'public' section from your config or use platform: 'fargate' or 'vercel'")
+            print("Please remove the 'public' section from your config or use platform: 'fargate' or 's3'")
             sys.exit(1)
     
     # Route to appropriate deployment module
