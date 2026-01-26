@@ -190,6 +190,14 @@ def deploy_to_s3(config_dict=None, **kwargs):
                 allow_create, certificate_arn=cert_arn
             )
             
+            # Step 5.2.1: Invalidate CloudFront cache after S3 upload
+            print(f"\n=== Invalidating CloudFront Cache ===")
+            try:
+                cloudfront.invalidate_cloudfront_cache(cloudfront_client, cf_id)
+            except Exception as e:
+                print(f"Warning: Failed to invalidate CloudFront cache: {e}")
+                print("  You may need to manually invalidate the cache or wait for TTL to expire")
+            
             # Step 5.3: Create Route53 record pointing to CloudFront
             print(f"\n=== Setting up Route53 DNS ===")
             route53.create_or_update_dns_record(

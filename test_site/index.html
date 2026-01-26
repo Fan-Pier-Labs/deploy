@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deploy Test - Fan Pier Labs</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 600px;
+            width: 100%;
+            text-align: center;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 2.5em;
+        }
+        
+        .status {
+            font-size: 1.2em;
+            color: #666;
+            margin-bottom: 30px;
+        }
+        
+        .counter {
+            font-size: 4em;
+            font-weight: bold;
+            color: #667eea;
+            margin: 30px 0;
+            font-family: 'Courier New', monospace;
+            transition: transform 0.2s ease;
+        }
+        
+        .info {
+            background: #f5f5f5;
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 30px;
+            text-align: left;
+        }
+        
+        .info h2 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 1.3em;
+        }
+        
+        .info p {
+            color: #666;
+            margin: 10px 0;
+            line-height: 1.6;
+        }
+        
+        .success {
+            color: #10b981;
+            font-weight: bold;
+        }
+        
+        .cache-info {
+            background: #e0f2fe;
+            border-left: 4px solid #0ea5e9;
+            padding: 15px;
+            margin-top: 20px;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Deploy Test Site</h1>
+        <p class="status">Testing CloudFront cache invalidation!</p>
+        <div class="counter" id="counter">0</div>
+        <p class="status">Seconds since page load</p>
+        
+        <div class="info">
+            <h2>Deployment Information</h2>
+            <p><strong>Domain:</strong> <span id="domain">Loading...</span></p>
+            <p><strong>Platform:</strong> <span class="success">AWS S3 + CloudFront</span></p>
+            <p><strong>Status:</strong> <span class="success">✓ Operational</span></p>
+            <p><strong>Cache TTL:</strong> 10 minutes</p>
+            <p><strong>Last Updated:</strong> <span id="timestamp">Loading...</span></p>
+            <p><strong>Version:</strong> <span id="version">v1.0.0</span></p>
+        </div>
+        
+        <div class="cache-info">
+            <p><strong>💡 Cache Invalidation Test</strong></p>
+            <p>After deploying, the CloudFront cache is automatically invalidated so you see the latest version immediately!</p>
+        </div>
+    </div>
+    
+    <script src="app.js"></script>
+</body>
+</html>

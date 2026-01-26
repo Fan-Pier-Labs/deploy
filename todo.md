@@ -8,4 +8,4 @@
 
 - [ ] with s3, is it possible to only upload files that changed? 
 
-- [ ] when you deploy to s3, revoke the entire cloudfront cdn cache for the relevant cdn
+- [x] when you deploy to s3, revoke the entire cloudfront cdn cache for the relevant cdn

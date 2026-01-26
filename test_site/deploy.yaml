@@ -1,0 +1,11 @@
+platform: "s3"
+app_name: "deploytest-site"
+aws:
+  profile: "personal"
+  region: "us-east-2"
+s3:
+  folder: "."
+  bucket_name: "deploytest-fanpierlabs-com"  # Custom bucket name
+public:
+  domain: "deploytest.fanpierlabs.com"
+allow_create: true

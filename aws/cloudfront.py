@@ -212,3 +212,48 @@ def wait_for_cloudfront_deployment(cloudfront_client, distribution_id, timeout_m
     print(f"Warning: CloudFront distribution did not deploy within {timeout_minutes} minutes")
     print("You may need to wait longer or check the AWS Console")
     return False
+
+
+def invalidate_cloudfront_cache(cloudfront_client, distribution_id, paths=None):
+    """
+    Invalidate CloudFront cache for a distribution.
+    
+    Args:
+        cloudfront_client: Boto3 CloudFront client
+        distribution_id: CloudFront distribution ID
+        paths: List of paths to invalidate. Defaults to ['/*'] to invalidate everything.
+    
+    Returns the invalidation ID.
+    """
+    if paths is None:
+        paths = ['/*']  # Invalidate entire cache by default
+    
+    # Create a unique caller reference using timestamp
+    caller_reference = f"invalidation-{int(time.time())}"
+    
+    try:
+        print(f"Invalidating CloudFront cache for distribution {distribution_id}...")
+        print(f"  Paths: {', '.join(paths)}")
+        
+        response = cloudfront_client.create_invalidation(
+            DistributionId=distribution_id,
+            InvalidationBatch={
+                'Paths': {
+                    'Quantity': len(paths),
+                    'Items': paths
+                },
+                'CallerReference': caller_reference
+            }
+        )
+        
+        invalidation_id = response['Invalidation']['Id']
+        status = response['Invalidation']['Status']
+        
+        print(f"✓ Cache invalidation created: {invalidation_id}")
+        print(f"  Status: {status}")
+        print(f"  Note: Invalidation typically completes within 1-2 minutes")
+        
+        return invalidation_id
+    except Exception as e:
+        print(f"Error creating cache invalidation: {e}")
+        raise
