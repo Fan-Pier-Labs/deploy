@@ -18,7 +18,7 @@ Add the deploy tool to your `package.json` as a dev dependency:
 ```json
 {
   "devDependencies": {
-    "deploy": "git@github.com:Fan-Pier-Labs/deploy.git"
+    "deploy": "https://github.com:Fan-Pier-Labs/deploy"
   },
   "scripts": {
     "deploy": "python3 ./node_modules/deploy/main.py --config deploy.yaml"
