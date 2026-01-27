@@ -4,6 +4,7 @@ Utility functions for deployment scripts.
 """
 import subprocess
 import sys
+import re
 
 
 def run_command(command, error_message, stream_output=False):
@@ -59,3 +60,41 @@ def run_command(command, error_message, stream_output=False):
             sys.exit(1)
         
         return result
+
+
+def parse_ephemeral_storage(value):
+    """
+    Parse ephemeral_storage value from either integer or string format.
+    
+    Args:
+        value: Either an integer (e.g., 21) or a string (e.g., "21gb", "21GB", "21 gb")
+    
+    Returns:
+        Integer value in GB
+    
+    Examples:
+        parse_ephemeral_storage(21) -> 21
+        parse_ephemeral_storage("21gb") -> 21
+        parse_ephemeral_storage("21GB") -> 21
+        parse_ephemeral_storage("21 gb") -> 21
+    """
+    if isinstance(value, int):
+        return value
+    
+    if isinstance(value, str):
+        # Remove whitespace and convert to lowercase
+        value = value.strip().lower()
+        
+        # Try to extract number and unit
+        match = re.match(r'^(\d+)\s*(gb|gib)?$', value)
+        if match:
+            number = int(match.group(1))
+            return number
+        
+        # If no match, try to parse as integer string
+        try:
+            return int(value)
+        except ValueError:
+            raise ValueError(f"Invalid ephemeral_storage format: {value}. Expected integer or string like '21gb'")
+    
+    raise ValueError(f"Invalid ephemeral_storage type: {type(value)}. Expected int or str")

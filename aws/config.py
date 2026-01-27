@@ -4,6 +4,7 @@ Configuration loading and validation.
 """
 import yaml
 import sys
+from .utils import parse_ephemeral_storage
 
 
 def load_config(config_file):
@@ -74,6 +75,13 @@ def load_config(config_file):
                         print("Error: invalid config - 'lightweight' mode requires replicas to be 1")
                         sys.exit(1)
         
+        # Parse ephemeral_storage (supports both integer and string formats like "21gb")
+        try:
+            ephemeral_storage = parse_ephemeral_storage(task_config['ephemeral_storage'])
+        except ValueError as e:
+            print(f"Error: {str(e)}")
+            sys.exit(1)
+        
         result = {
             'app_name': config['app_name'],
             'service_name': config.get('service_name', f"{config['app_name']}-service"),
@@ -83,7 +91,7 @@ def load_config(config_file):
             'memory': str(task_config['memory']),
             'spot': task_config.get('spot', True),
             'replicas': task_config.get('replicas', 1),
-            'ephemeral_storage': task_config['ephemeral_storage'],
+            'ephemeral_storage': ephemeral_storage,
             'allow_create': config.get('allow_create', False),
             'environment': config.get('environment', {}),
             'iam_permissions': config.get('iam_permissions', default_iam_permissions),

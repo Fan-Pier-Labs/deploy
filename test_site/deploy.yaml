@@ -8,4 +8,7 @@ s3:
   bucket_name: "deploytest-fanpierlabs-com"  # Custom bucket name
 public:
   domain: "deploytest.fanpierlabs.com"
+
+  # mode: "production"
+
 allow_create: true
