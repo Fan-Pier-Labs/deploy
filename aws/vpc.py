@@ -135,7 +135,7 @@ def create_alb_security_group(ec2_client, vpc_id, app_name, allow_create=False):
     return sg_id
 
 
-def update_fargate_security_group_for_alb(ec2_client, fargate_sg_id, alb_sg_id, port=80):
+def update_fargate_security_group_for_alb(ec2_client, fargate_sg_id, alb_sg_id, port=8080):
     """
     Update Fargate security group to allow traffic from ALB security group on the container port.
     """

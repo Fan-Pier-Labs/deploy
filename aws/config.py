@@ -98,7 +98,7 @@ def load_config(config_file):
             'custom_iam_policy': config.get('custom_iam_policy', None),
             'dockerfile': config.get('dockerfile', 'Dockerfile'),
             'public': public_config if public_config else None,
-            'port': task_config.get('port', 80)  # Default port for container
+            'port': task_config.get('port', 8080)  # Default port for container
         }
         
         # Extract certificate_id from public config if provided

@@ -45,7 +45,7 @@ def ensure_cluster(ecs_client, cluster_name, allow_create=False):
 
 def register_task_definition(ecs_client, task_family, image_name, app_name, region, 
                             cpu, memory, ephemeral_storage, execution_role_arn, 
-                            environment_variables=None, port=80):
+                            environment_variables=None, port=8080):
     """
     Register ECS task definition.
     Returns the task definition ARN.

@@ -89,7 +89,7 @@ task:
 - `spot`: Use Fargate Spot (true) or On-Demand (false)
 - `replicas`: Number of task replicas
 - `ephemeral_storage`: Storage in GB (20-200)
-- `port`: Container port (default: 80)
+- `port`: Container port (default: 8080)
 
 ## Route53 Requirements
 

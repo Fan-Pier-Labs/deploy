@@ -61,7 +61,7 @@ def create_application_load_balancer(elbv2_client, ec2_client, app_name, vpc_id,
         sys.exit(1)
 
 
-def create_target_group(elbv2_client, vpc_id, app_name, port=80, protocol='HTTP', 
+def create_target_group(elbv2_client, vpc_id, app_name, port=8080, protocol='HTTP', 
                        health_check_path='/health', allow_create=False):
     """
     Create a target group for the ECS service.

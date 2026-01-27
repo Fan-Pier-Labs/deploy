@@ -16,7 +16,7 @@ import boto3
 
 def deploy_lightweight_public_app(session, config, subnet_ids, security_group_id, 
                                    task_definition_arn, cluster_name, service_name,
-                                   desired_count, use_spot, allow_create, port=80):
+                                   desired_count, use_spot, allow_create, port=8080):
     """
     Deploy a lightweight public app where domain points directly to Fargate service.
     This requires the service to have a public IP and the domain to point to it.
@@ -447,7 +447,7 @@ def deploy_to_fargate(config_dict=None, **kwargs):
     custom_iam_policy = params.get('custom_iam_policy')
     dockerfile = params.get('dockerfile', 'Dockerfile')
     public_config = params.get('public')
-    port = params.get('port', 80)
+    port = params.get('port', 8080)
     certificate_id = params.get('certificate_id')
     
     print("Starting deployment to AWS Fargate...")
