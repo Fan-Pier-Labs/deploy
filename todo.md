@@ -13,3 +13,6 @@
 
 
 - [ ] migrate to buildx Buildx is Docker’s CLI for the BuildKit builder and gives you explicit control over platform and cache. Your deploy uses --platform=linux/amd64 for Fargate, but Docker’s default cache doesn’t separate layers by architecture, so a build on ARM64 (e.g. your Mac) can cache ARM64 layers and then fail when the same cache is reused for an AMD64 build inside the container (or the other way around). With Buildx you can send cache to architecture-specific locations (e.g. --cache-to type=local,dest=./.buildx-cache-amd64 or a registry tag like buildcache:amd64), and use the matching --cache-from when building, so each platform (amd64 vs arm64) has its own cache and they never get mixed. That way you can run the same deploy command both on your host and inside the dev container without platform/cache conflicts, and still get fast, correct builds.
+
+
+- [ ] when you do a faragte deploy, you need to ensure that the new tasks you deploy are able to start successfully, and are able to take on new traffic. aka register with the target group, pass health checks, etc. 
