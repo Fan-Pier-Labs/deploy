@@ -8,7 +8,7 @@
 
 - [ ] with s3, is it possible to only upload files that changed? 
 
-- [x] when you deploy to s3, revoke the entire cloudfront cdn cache for the relevant cdn
+- [x] when you do any deployment (any type), invalidate the relevant CDN cache (AWS: CloudFront; S3 and Fargate both invalidate after deploy)
 - [ ] i need a way to teardown all relevant infrastructure so it can be re-built on next deploy. this can be used to solve bugs, or times where infra that was already set up is bugged out
 
 

@@ -571,6 +571,16 @@ def deploy_to_fargate(config_dict=None, **kwargs):
                 load_balancer_config['targetGroupArn'], timeout_minutes=10
             )
         
+        # Step 6.6: Invalidate CloudFront cache so users get the new deployment immediately
+        if '_cloudfront_id' in params:
+            print(f"\n=== Invalidating CloudFront Cache ===")
+            try:
+                cloudfront_client = session.client('cloudfront')
+                cloudfront.invalidate_cloudfront_cache(cloudfront_client, params['_cloudfront_id'])
+            except Exception as e:
+                print(f"Warning: Failed to invalidate CloudFront cache: {e}")
+                print("  You may need to manually invalidate the cache or wait for TTL to expire")
+        
         # Step 7: Handle lightweight public app DNS (after service is created)
         if public_config and public_config.get('mode') == 'lightweight':
             deploy_lightweight_public_app(
