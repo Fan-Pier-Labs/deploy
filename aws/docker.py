@@ -65,3 +65,42 @@ def ensure_docker_running():
         print("Error: Docker Desktop is not installed or 'open' command is not available")
         print("Please install Docker Desktop or start it manually.")
         sys.exit(1)
+
+
+def ensure_buildx_builder():
+    """
+    Ensure a Buildx builder exists and is selected for architecture-specific builds.
+    Uses a dedicated 'deploy-builder' so cache and platform behavior are consistent
+    when building on host (e.g. ARM64 Mac) vs in a dev container (e.g. AMD64).
+    """
+    result = subprocess.run(
+        ['docker', 'buildx', 'inspect', 'deploy-builder'],
+        capture_output=True,
+        text=True,
+        timeout=10
+    )
+    if result.returncode != 0:
+        subprocess.run(
+            ['docker', 'buildx', 'create', '--name', 'deploy-builder', '--use'],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        print("Created and selected Buildx builder 'deploy-builder'")
+    else:
+        result = subprocess.run(
+            ['docker', 'buildx', 'use', 'deploy-builder'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode != 0:
+            subprocess.run(
+                ['docker', 'buildx', 'create', '--name', 'deploy-builder', '--use'],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            print("Created and selected Buildx builder 'deploy-builder'")

@@ -18,3 +18,7 @@ venv/
 .cursor
 
 .DS_Store
+
+# Buildx architecture-specific cache (used by Fargate deploy)
+.buildx-cache-amd64/
+.buildx-cache-arm64/

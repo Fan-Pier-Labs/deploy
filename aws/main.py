@@ -3,15 +3,16 @@
 CLI entry point for AWS Fargate deployment.
 """
 import sys
-from . import deploy, config
+from . import deploy, config, destroy
 
 
-def main(config_file=None):
+def main(config_file=None, destroy_infra=False):
     """
     Deploy to AWS Fargate using configuration from file.
     
     Args:
         config_file: Path to YAML configuration file. If None, will try to get from sys.argv.
+        destroy_infra: If True, run teardown (--destroy) instead of deploy.
     """
     # Get config file from argument or sys.argv (for backward compatibility)
     if config_file is None:
@@ -23,6 +24,11 @@ def main(config_file=None):
     
     # Load configuration from file
     config_dict = config.load_config(config_file)
+    config_dict["_config_file"] = config_file  # so deploy can use config dir as Docker build context
+
+    if destroy_infra:
+        destroy.destroy_fargate_infra(config_dict)
+        return
     
     # Validate lightweight mode requires exactly 1 replica
     public_config = config_dict.get('public') or {}

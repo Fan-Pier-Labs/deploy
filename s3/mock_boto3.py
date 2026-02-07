@@ -3,6 +3,7 @@
 In-memory mock boto3 clients with the same interface as real AWS clients.
 All state is stored in memory for testing without hitting AWS.
 """
+import hashlib
 import json
 import time
 from copy import deepcopy
@@ -90,6 +91,56 @@ class MockS3Client:
         self._buckets[Bucket]["policy"] = Policy
         return {}
 
+    def get_paginator(self, operation_name):
+        if operation_name != "list_objects_v2":
+            raise ValueError(f"Unknown paginator: {operation_name}")
+
+        class Paginator:
+            def __init__(pag_self, buckets):
+                pag_self._buckets = buckets
+
+            def paginate(pag_self, Bucket=None, **kwargs):
+                objs = pag_self._buckets.get(Bucket, {}).get("objects", {})
+                contents = [{"Key": k} for k in objs]
+                yield {"Contents": contents, "IsTruncated": False}
+
+        return Paginator(self._buckets)
+
+    def list_objects_v2(self, Bucket=None, **kwargs):
+        if Bucket not in self._buckets:
+            raise _client_error("404", "NoSuchBucket")
+        objs = self._buckets[Bucket]["objects"]
+        contents = [{"Key": k} for k in objs]
+        return {"Contents": contents, "IsTruncated": False}
+
+    def delete_objects(self, Bucket=None, Delete=None):
+        if Bucket not in self._buckets:
+            raise _client_error("404", "NoSuchBucket")
+        for item in Delete.get("Objects", []):
+            key = item.get("Key")
+            if key in self._buckets[Bucket]["objects"]:
+                del self._buckets[Bucket]["objects"][key]
+        return {}
+
+    def delete_bucket(self, Bucket=None):
+        if Bucket not in self._buckets:
+            raise _client_error("404", "NoSuchBucket")
+        objs = self._buckets[Bucket].get("objects", {})
+        if objs:
+            raise _client_error("BucketNotEmpty", "The bucket you tried to delete is not empty")
+        del self._buckets[Bucket]
+        return {}
+
+    def head_object(self, Bucket=None, Key=None):
+        if Bucket not in self._buckets:
+            raise _client_error("404", "NoSuchBucket")
+        if Key not in self._buckets[Bucket]["objects"]:
+            raise _client_error("404", "Not Found")
+        obj = self._buckets[Bucket]["objects"][Key]
+        body = obj["Body"]
+        etag = hashlib.md5(body).hexdigest()
+        return {"ETag": f'"{etag}"', "ContentLength": len(body)}
+
     def upload_file(self, Filename, Bucket, Key, ExtraArgs=None):
         if Bucket not in self._buckets:
             raise _client_error("404", "NoSuchBucket")
@@ -169,9 +220,16 @@ class MockRoute53Client:
                 self._record_sets[HostedZoneId].append(deepcopy(rr))
         return {"ChangeInfo": {"Id": "change-1", "Status": "PENDING"}}
 
-    def add_hosted_zone(self, zone_id, name):
+    def add_hosted_zone(self, zone_id, name, ns_list=None):
         name = name.rstrip(".") if not name.endswith(".") else name[:-1]
         self._hosted_zones.append({"Id": zone_id, "Name": name + ".", "CallerReference": "test"})
+        if ns_list:
+            self._record_sets.setdefault(zone_id, []).append({
+                "Name": name + ".",
+                "Type": "NS",
+                "TTL": 172800,
+                "ResourceRecords": [{"Value": ns.rstrip(".") + "."} for ns in ns_list],
+            })
 
 
 class MockCloudFrontClient:
@@ -247,6 +305,12 @@ class MockCloudFrontClient:
         inv_id = f"I{int(time.time())}"
         self._invalidations.append({"Id": inv_id, "DistributionId": DistributionId, "Paths": InvalidationBatch.get("Paths", {}).get("Items", [])})
         return {"Invalidation": {"Id": inv_id, "Status": "InProgress"}}
+
+    def delete_distribution(self, Id=None, IfMatch=None):
+        if Id not in self._distributions:
+            raise _client_error("NoSuchDistribution", "Not found")
+        del self._distributions[Id]
+        return {}
 
 
 class ResourceNotFoundException(ClientError):
@@ -364,13 +428,23 @@ class MockSession:
         self._cloudfront_state.clear()
         self._acm_state.clear()
 
-    def seed_route53_hosted_zone(self, zone_id, name):
-        """Add a hosted zone for tests (e.g. find_hosted_zone)."""
+    def seed_route53_hosted_zone(self, zone_id, name, ns_list=None):
+        """Add a hosted zone for tests (e.g. find_hosted_zone).
+        If ns_list is provided, seeds the zone's NS record set so get_hosted_zone_ns works.
+        """
         name = name.rstrip(".") if name.endswith(".") else name
         self._route53_state.setdefault("hosted_zones", []).append(
             {"Id": zone_id, "Name": name + ".", "CallerReference": "test"}
         )
         self._route53_state.setdefault("record_sets", {})
+        if ns_list:
+            record_sets = self._route53_state["record_sets"]
+            record_sets.setdefault(zone_id, []).append({
+                "Name": name + ".",
+                "Type": "NS",
+                "TTL": 172800,
+                "ResourceRecords": [{"Value": ns.rstrip(".") + "."} for ns in ns_list],
+            })
 
     def seed_acm_certificate(self, arn, domain, status="ISSUED"):
         """Add an ACM certificate for tests."""

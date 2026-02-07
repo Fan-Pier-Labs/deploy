@@ -1,0 +1,17 @@
+# Fargate test site - deploy from repo root: python main.py --config test_site_fargate/deploy.yaml
+platform: "fargate"
+app_name: "deploytest-fargate-site"
+aws:
+  profile: "fanpierlabs"
+  region: "us-east-2"
+task:
+  cpu: 256
+  memory: 512
+  ephemeral_storage: 21
+  spot: true
+  replicas: 1
+  port: 8080
+public:
+  domain: "fargatetest.fanpierlabs.com"
+  mode: "lightweight"  # single replica, direct to Fargate
+allow_create: true

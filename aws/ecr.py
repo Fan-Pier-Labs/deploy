@@ -25,11 +25,13 @@ def setup_ecr_repository(ecr_client, repository_name, allow_create=False):
         print(f"Created ECR repository: {repository_name}")
 
 
-def build_and_push_image(ecr_client, repository_name, region, profile, dockerfile='Dockerfile'):
+def build_and_push_image(ecr_client, repository_name, region, profile, dockerfile='Dockerfile', build_context=None):
     """
     Build Docker image and push to ECR.
     Returns the image URI.
+    If build_context is set, the Docker build runs from that directory (e.g. config file dir).
     """
+    import os
     # Get account ID
     session = boto3.Session(profile_name=profile, region_name=region)
     account_id = session.client('sts').get_caller_identity().get('Account')
@@ -39,16 +41,30 @@ def build_and_push_image(ecr_client, repository_name, region, profile, dockerfil
     image_tag = f"latest-{deployment_id}"
     image_name = f"{account_id}.dkr.ecr.{region}.amazonaws.com/{repository_name}:{image_tag}"
     
-    # Ensure Docker is running
+    # Ensure Docker is running and a Buildx builder is selected
     docker.ensure_docker_running()
-    
-    # Build Docker image
-    print(f"Building Docker image for linux/amd64 platform using {dockerfile}...")
-    utils.run_command(
-        f"docker build --platform=linux/amd64 -f {dockerfile} -t {repository_name}:{image_tag} .",
-        "Failed to build Docker image",
-        stream_output=True
-    )
+    docker.ensure_buildx_builder()
+
+    # Build with Buildx so cache is architecture-specific (avoids ARM64/AMD64 cache
+    # mixing when running on host vs in a dev container)
+    cache_dir = ".buildx-cache-amd64"
+    orig_cwd = os.getcwd()
+    if build_context:
+        os.chdir(build_context)
+        print(f"Building from context: {build_context}")
+    try:
+        print(f"Building Docker image for linux/amd64 using Buildx and {dockerfile}...")
+        utils.run_command(
+            f"docker buildx build --platform=linux/amd64 --load "
+            f"--cache-from type=local,src={cache_dir} "
+            f"--cache-to type=local,dest={cache_dir},mode=max "
+            f"-f {dockerfile} -t {repository_name}:{image_tag} .",
+            "Failed to build Docker image",
+            stream_output=True
+        )
+    finally:
+        if build_context:
+            os.chdir(orig_cwd)
     
     # Tag Docker image for ECR
     print("Tagging Docker image for ECR...")

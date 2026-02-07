@@ -2,6 +2,7 @@
 """
 S3 bucket management and file upload.
 """
+import hashlib
 import sys
 import os
 import boto3
@@ -170,10 +171,51 @@ def set_bucket_policy_for_cloudfront(s3_client, bucket_name, allow_create=False)
         sys.exit(1)
 
 
-def upload_folder_to_s3(s3_client, bucket_name, folder_path):
+def _file_md5(path):
+    """Compute MD5 of file in chunks (S3 single-part ETag is MD5 hex)."""
+    h = hashlib.md5()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(8192), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _should_upload(s3_client, bucket_name, s3_key, local_path, incremental):
     """
-    Upload all files from a folder to S3 bucket.
-    Maintains directory structure.
+    Return True if the file should be uploaded (missing on S3 or content changed).
+    When incremental is False, always returns True.
+    """
+    if not incremental:
+        return True
+    try:
+        head = s3_client.head_object(Bucket=bucket_name, Key=s3_key)
+    except ClientError as e:
+        if e.response['Error']['Code'] == '404':
+            return True  # object doesn't exist
+        raise
+    etag = (head.get('ETag') or '').strip('"')
+    s3_size = head.get('ContentLength', 0)
+    local_size = os.path.getsize(local_path)
+    # Single-part upload: S3 ETag is MD5 hex (no hyphen)
+    if '-' not in etag:
+        local_md5 = _file_md5(local_path)
+        if local_md5 == etag:
+            return False  # identical content
+        return True
+    # Multipart upload: ETag is not MD5; compare size as a fast check
+    if local_size != s3_size:
+        return True
+    # Same size but we can't verify content; upload to be safe
+    return True
+
+
+def upload_folder_to_s3(s3_client, bucket_name, folder_path, incremental=True):
+    """
+    Upload files from a folder to S3 bucket. Maintains directory structure.
+
+    When incremental is True (default), skips files that already exist in S3
+    with the same content (compared via MD5/ETag for single-part objects),
+    so only changed or new files are uploaded.
     """
     if not os.path.exists(folder_path):
         print(f"Error: Folder '{folder_path}' does not exist")
@@ -189,9 +231,11 @@ def upload_folder_to_s3(s3_client, bucket_name, folder_path):
         print(f"Error: index.html not found in folder '{folder_path}'")
         sys.exit(1)
     
-    print(f"Uploading files from '{folder_path}' to S3 bucket '{bucket_name}'...")
+    mode = "incremental" if incremental else "full"
+    print(f"Uploading files from '{folder_path}' to S3 bucket '{bucket_name}' ({mode})...")
     
     uploaded_count = 0
+    skipped_count = 0
     for root, dirs, files in os.walk(folder_path):
         for file in files:
             local_path = os.path.join(root, file)
@@ -202,6 +246,11 @@ def upload_folder_to_s3(s3_client, bucket_name, folder_path):
             s3_key = relative_path.replace(os.sep, '/')
             
             try:
+                if not _should_upload(s3_client, bucket_name, s3_key, local_path, incremental):
+                    skipped_count += 1
+                    print(f"  Skipped (unchanged): {s3_key}")
+                    continue
+
                 # Determine content type
                 content_type = 'binary/octet-stream'
                 if file.endswith('.html'):
@@ -240,7 +289,8 @@ def upload_folder_to_s3(s3_client, bucket_name, folder_path):
                 print(f"Error uploading {local_path}: {e}")
                 sys.exit(1)
     
-    print(f"Successfully uploaded {uploaded_count} files to S3 bucket '{bucket_name}'")
+    print(f"Successfully uploaded {uploaded_count} files to S3 bucket '{bucket_name}'" +
+          (f", skipped {skipped_count} unchanged" if skipped_count else ""))
 
 
 def get_bucket_website_endpoint(s3_client, bucket_name, region):

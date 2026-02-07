@@ -34,6 +34,7 @@ def deploy_to_s3(config_dict=None, **kwargs):
     app_name = params.get('app_name')
     region = params.get('region')
     allow_create = params.get('allow_create', False)
+    yes_flag = params.get('yes', False)
     folder_path = params.get('folder')
     bucket_name = params.get('bucket_name')  # Optional: user-specified bucket name
     public_config = params.get('public')
@@ -121,7 +122,11 @@ def deploy_to_s3(config_dict=None, **kwargs):
             print(f"\n=== Setting up Public Domain ===")
             print(f"Domain: {domain}")
             print("Architecture: Route53 -> CloudFront (10 min cache) -> S3")
-            
+
+            # Validate Route53 hosted zone NS delegation before creating any DNS records
+            # (avoids ACM validation hanging when registrar points to wrong nameservers)
+            route53.ensure_domain_ready_for_dns(route53_client, domain, allow_create=allow_create, yes_flag=yes_flag)
+
             # Step 5.1: Request/get ACM certificate for CloudFront
             # CloudFront requires certificates to be in us-east-1
             acm_region = 'us-east-1'

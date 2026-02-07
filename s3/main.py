@@ -3,15 +3,16 @@
 CLI entry point for AWS S3 static website deployment.
 """
 import sys
-from . import deploy, config
+from . import deploy, config, destroy
 
 
-def main(config_file=None):
+def main(config_file=None, destroy_infra=False):
     """
     Deploy to AWS S3 using configuration from file.
     
     Args:
         config_file: Path to YAML configuration file. If None, will try to get from sys.argv.
+        destroy_infra: If True, run teardown (--destroy) instead of deploy.
     """
     # Get config file from argument or sys.argv (for backward compatibility)
     if config_file is None:
@@ -24,8 +25,10 @@ def main(config_file=None):
     # Load configuration from file
     config_dict = config.load_config(config_file)
     
-    # Deploy with specified options
-    deploy.deploy_to_s3(config_dict=config_dict)
+    if destroy_infra:
+        destroy.destroy_s3_infra(config_dict)
+    else:
+        deploy.deploy_to_s3(config_dict=config_dict)
 
 
 if __name__ == "__main__":

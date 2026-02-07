@@ -180,18 +180,73 @@ class TestDeployToS3S3Only:
                         allow_create=False,
                     )
 
+    def test_incremental_deploy_second_run_unchanged_skips_upload(self):
+        """Full deploy with incremental: second run with same content skips uploads, bucket unchanged."""
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "index.html"), "w") as f:
+                f.write("<html>v1</html>")
+            mock_session = MockSession()
+            with patch("s3.deploy.boto3.Session", return_value=mock_session):
+                deploy.deploy_to_s3(
+                    app_name="myapp",
+                    region="us-east-1",
+                    folder=d,
+                    allow_create=True,
+                )
+            bucket = mock_session._s3_state["myapp-static-site"]
+            assert "index.html" in bucket["objects"]
+            assert bucket["objects"]["index.html"]["Body"] == b"<html>v1</html>"
+            # Second deploy with same content (incremental default): should skip upload, bucket still correct
+            with patch("s3.deploy.boto3.Session", return_value=mock_session):
+                deploy.deploy_to_s3(
+                    app_name="myapp",
+                    region="us-east-1",
+                    folder=d,
+                    allow_create=True,
+                )
+            assert bucket["objects"]["index.html"]["Body"] == b"<html>v1</html>"
+
+    def test_incremental_deploy_second_run_changed_file_uploads(self):
+        """Full deploy with incremental: change a file, second deploy uploads updated content."""
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "index.html"), "w") as f:
+                f.write("<html>v1</html>")
+            mock_session = MockSession()
+            with patch("s3.deploy.boto3.Session", return_value=mock_session):
+                deploy.deploy_to_s3(
+                    app_name="myapp",
+                    region="us-east-1",
+                    folder=d,
+                    allow_create=True,
+                )
+            bucket = mock_session._s3_state["myapp-static-site"]
+            assert bucket["objects"]["index.html"]["Body"] == b"<html>v1</html>"
+            # Change file
+            with open(os.path.join(d, "index.html"), "w") as f:
+                f.write("<html>v2</html>")
+            with patch("s3.deploy.boto3.Session", return_value=mock_session):
+                deploy.deploy_to_s3(
+                    app_name="myapp",
+                    region="us-east-1",
+                    folder=d,
+                    allow_create=True,
+                )
+            assert bucket["objects"]["index.html"]["Body"] == b"<html>v2</html>"
+
 
 class TestDeployToS3WithPublicDomain:
     """Tests for deploy_to_s3 with public domain (CloudFront, Route53, ACM)."""
 
     @patch("s3.deploy.test_deployment_http_requests", MagicMock())
     @patch("s3.deploy.acm.wait_for_certificate_validation", return_value=True)
-    def test_public_domain_uses_certificate_id_and_issued_cert(self, mock_wait):
+    @patch("aws.route53.get_public_ns_for_domain", return_value=["ns-1.awsdns-1.com", "ns-2.awsdns-2.com"])
+    def test_public_domain_uses_certificate_id_and_issued_cert(self, mock_ns, mock_wait):
+        mock_ns_list = ["ns-1.awsdns-1.com", "ns-2.awsdns-2.com"]
         with tempfile.TemporaryDirectory() as d:
             with open(os.path.join(d, "index.html"), "w") as f:
                 f.write("<html></html>")
             mock_session = MockSession()
-            mock_session.seed_route53_hosted_zone("/hostedzone/Z123", "example.com")
+            mock_session.seed_route53_hosted_zone("/hostedzone/Z123", "example.com", ns_list=mock_ns_list)
             cert_arn = "arn:aws:acm:us-east-1:123456789012:certificate/cert-123"
             mock_session.seed_acm_certificate(cert_arn, "app.example.com", status="ISSUED")
             with patch("s3.deploy.boto3.Session", return_value=mock_session):
@@ -208,12 +263,14 @@ class TestDeployToS3WithPublicDomain:
 
     @patch("s3.deploy.test_deployment_http_requests", MagicMock())
     @patch("s3.deploy.acm.wait_for_certificate_validation", return_value=True)
-    def test_public_domain_request_certificate_path(self, mock_wait):
+    @patch("aws.route53.get_public_ns_for_domain", return_value=["ns-1.awsdns-1.com", "ns-2.awsdns-2.com"])
+    def test_public_domain_request_certificate_path(self, mock_ns, mock_wait):
+        mock_ns_list = ["ns-1.awsdns-1.com", "ns-2.awsdns-2.com"]
         with tempfile.TemporaryDirectory() as d:
             with open(os.path.join(d, "index.html"), "w") as f:
                 f.write("<html></html>")
             mock_session = MockSession()
-            mock_session.seed_route53_hosted_zone("/hostedzone/Z123", "example.com")
+            mock_session.seed_route53_hosted_zone("/hostedzone/Z123", "example.com", ns_list=mock_ns_list)
             # No certificate_id -> request_certificate path; no cert pre-seeded
             with patch("s3.deploy.boto3.Session", return_value=mock_session):
                 deploy.deploy_to_s3(

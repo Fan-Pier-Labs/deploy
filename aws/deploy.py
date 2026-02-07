@@ -3,6 +3,7 @@
 Main deployment orchestrator for AWS Fargate.
 Supports both internal deployments and public-facing web apps.
 """
+import os
 import sys
 import time
 import boto3
@@ -186,7 +187,11 @@ def deploy_production_public_app(session, config, subnet_ids, security_group_id,
     print(f"\n=== Deploying Production Public App ===")
     print(f"Domain: {domain}")
     print("Architecture: Route53 -> CloudFront -> ALB -> Fargate")
-    
+
+    # Validate Route53 hosted zone NS delegation before creating any DNS records
+    yes_flag = config.get('yes', False)
+    route53.ensure_domain_ready_for_dns(route53_client, domain, allow_create=allow_create, yes_flag=yes_flag)
+
     # Step 1: Create ALB security group
     alb_sg_id = vpc.create_alb_security_group(ec2_client, vpc_id, config['app_name'], allow_create)
     
@@ -526,9 +531,16 @@ def deploy_to_fargate(config_dict=None, **kwargs):
         repository_name = app_name.lower()
         ecr.setup_ecr_repository(ecr_client, repository_name, allow_create)
         
-        # Step 2: Build and push Docker image
+        # Step 2: Build and push Docker image (use config file dir as build context when set)
+        build_context = None
+        config_file_path = params.get("_config_file")
+        if config_file_path:
+            build_context = os.path.dirname(os.path.abspath(config_file_path))
+            if not os.path.isdir(build_context):
+                build_context = None
         image_name = ecr.build_and_push_image(
-            ecr_client, repository_name, region, profile, dockerfile
+            ecr_client, repository_name, region, profile, dockerfile,
+            build_context=build_context
         )
         
         # Step 3: Setup ECS cluster

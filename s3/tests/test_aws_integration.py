@@ -81,6 +81,37 @@ class TestRoute53WithMock:
         assert len(records) == 1
         assert records[0]["Type"] == "CNAME"
 
+    def test_get_hosted_zone_ns(self):
+        client = MockRoute53Client()
+        client.add_hosted_zone("/hostedzone/Z123", "example.com", ns_list=["ns-1.awsdns-1.com", "ns-2.awsdns-2.com"])
+        ns = route53.get_hosted_zone_ns(client, "/hostedzone/Z123", "example.com")
+        assert sorted(ns) == ["ns-1.awsdns-1.com", "ns-2.awsdns-2.com"]
+
+    def test_get_hosted_zone_ns_empty_when_no_ns_record(self):
+        client = MockRoute53Client()
+        client.add_hosted_zone("/hostedzone/Z123", "example.com")
+        ns = route53.get_hosted_zone_ns(client, "/hostedzone/Z123", "example.com")
+        assert ns == []
+
+    def test_validate_ns_delegation_match(self):
+        client = MockRoute53Client()
+        client.add_hosted_zone("/hostedzone/Z123", "example.com", ns_list=["ns-1.awsdns-1.com", "ns-2.awsdns-2.com"])
+        with patch("aws.route53.get_public_ns_for_domain", return_value=["ns-1.awsdns-1.com", "ns-2.awsdns-2.com"]):
+            ok, msg, r53_ns, public_ns = route53.validate_ns_delegation(client, "app.example.com")
+        assert ok is True
+        assert "match" in msg.lower() or "ok" in msg.lower()
+        assert set(r53_ns) == {"ns-1.awsdns-1.com", "ns-2.awsdns-2.com"}
+
+    def test_validate_ns_delegation_mismatch(self):
+        client = MockRoute53Client()
+        client.add_hosted_zone("/hostedzone/Z123", "example.com", ns_list=["ns-1.awsdns-1.com", "ns-2.awsdns-2.com"])
+        with patch("aws.route53.get_public_ns_for_domain", return_value=["other-ns.registrar.com"]):
+            ok, msg, r53_ns, public_ns = route53.validate_ns_delegation(client, "app.example.com")
+        assert ok is False
+        assert "mismatch" in msg.lower() or "not pointing" in msg.lower()
+        assert r53_ns == ["ns-1.awsdns-1.com", "ns-2.awsdns-2.com"]
+        assert public_ns == ["other-ns.registrar.com"]
+
 
 class TestACMWithMock:
     """Tests for aws.acm using MockACMClient."""

@@ -206,6 +206,31 @@ class TestUploadFolderToS3:
         assert "index.html" in client.state["my-bucket"]["objects"]
         assert "assets/script.js" in client.state["my-bucket"]["objects"]
 
+    def test_incremental_skips_unchanged_files(self):
+        client = MockS3Client()
+        client.create_bucket(Bucket="my-bucket")
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "index.html"), "w") as f:
+                f.write("<html></html>")
+            s3_bucket.upload_folder_to_s3(client, "my-bucket", d, incremental=True)
+            assert "index.html" in client.state["my-bucket"]["objects"]
+            # Second run with same content: should skip (no duplicate upload)
+            s3_bucket.upload_folder_to_s3(client, "my-bucket", d, incremental=True)
+            # Object still present once
+            assert list(client.state["my-bucket"]["objects"].keys()) == ["index.html"]
+
+    def test_incremental_uploads_changed_file(self):
+        client = MockS3Client()
+        client.create_bucket(Bucket="my-bucket")
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "index.html"), "w") as f:
+                f.write("<html>v1</html>")
+            s3_bucket.upload_folder_to_s3(client, "my-bucket", d, incremental=True)
+            with open(os.path.join(d, "index.html"), "w") as f:
+                f.write("<html>v2</html>")
+            s3_bucket.upload_folder_to_s3(client, "my-bucket", d, incremental=True)
+            assert client.state["my-bucket"]["objects"]["index.html"]["Body"] == b"<html>v2</html>"
+
 
 class TestGetBucketWebsiteEndpoint:
     """Tests for get_bucket_website_endpoint."""

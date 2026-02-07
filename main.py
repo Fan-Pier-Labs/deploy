@@ -45,6 +45,8 @@ def main():
     parser = argparse.ArgumentParser(description='Deploy app to Fargate, Fly.io, or S3 (Vercel is currently disabled)')
     parser.add_argument('--config', type=str, default='deploy.yaml', 
                        help='Path to YAML configuration file (default: deploy.yaml)')
+    parser.add_argument('--destroy', action='store_true',
+                       help='Teardown all deployment infrastructure (S3 only for now). Prompts for confirmation.')
     
     args = parser.parse_args()
     
@@ -78,10 +80,14 @@ def main():
             print("Please remove the 'public' section from your config or use platform: 'fargate' or 's3'")
             sys.exit(1)
     
+    if args.destroy and platform not in ('s3', 'fargate'):
+        print("Error: --destroy is only supported for platform: s3 or fargate")
+        sys.exit(1)
+    
     # Route to appropriate deployment module
     if platform == 'fargate':
         from aws.main import main as aws_main
-        aws_main(config_file=config_path)
+        aws_main(config_file=config_path, destroy_infra=args.destroy)
     elif platform == 'fly':
         from fly.main import main as fly_main
         fly_main(config_file=config_path)
@@ -90,7 +96,7 @@ def main():
         vercel_main(config_file=config_path)
     elif platform == 's3':
         from s3.main import main as s3_main
-        s3_main(config_file=config_path)
+        s3_main(config_file=config_path, destroy_infra=args.destroy)
 
 
 if __name__ == "__main__":
