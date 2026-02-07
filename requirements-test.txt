@@ -1,0 +1,5 @@
+# Test dependencies (install: pip install --user --break-system-packages -r requirements-test.txt)
+pytest>=7.0
+boto3>=1.26
+botocore>=1.29
+pyyaml>=6.0
