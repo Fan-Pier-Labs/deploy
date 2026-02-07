@@ -25,6 +25,40 @@ def setup_ecr_repository(ecr_client, repository_name, allow_create=False):
         print(f"Created ECR repository: {repository_name}")
 
 
+def build_image_only(repository_name, dockerfile='Dockerfile', build_context=None):
+    """
+    Build Docker image locally only (no ECR push, no deploy).
+    Uses the same Buildx setup and cache as full deploy.
+    Returns the local image tag (e.g. repository_name:latest-xxxx).
+    """
+    import os
+    import uuid
+    deployment_id = str(uuid.uuid4())[:8]
+    image_tag = f"latest-{deployment_id}"
+    docker.ensure_docker_running()
+    docker.ensure_buildx_builder()
+    cache_dir = ".buildx-cache-amd64"
+    orig_cwd = os.getcwd()
+    if build_context:
+        os.chdir(build_context)
+        print(f"Building from context: {build_context}")
+    try:
+        print(f"Building Docker image for linux/amd64 using Buildx and {dockerfile}...")
+        utils.run_command(
+            f"docker buildx build --platform=linux/amd64 --load "
+            f"--cache-from type=local,src={cache_dir} "
+            f"--cache-to type=local,dest={cache_dir},mode=max "
+            f"-f {dockerfile} -t {repository_name}:{image_tag} .",
+            "Failed to build Docker image",
+            stream_output=True
+        )
+    finally:
+        if build_context:
+            os.chdir(orig_cwd)
+    print(f"Built image: {repository_name}:{image_tag}")
+    return f"{repository_name}:{image_tag}"
+
+
 def build_and_push_image(ecr_client, repository_name, region, profile, dockerfile='Dockerfile', build_context=None):
     """
     Build Docker image and push to ECR.

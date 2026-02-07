@@ -46,7 +46,9 @@ def main():
     parser.add_argument('--config', type=str, default='deploy.yaml', 
                        help='Path to YAML configuration file (default: deploy.yaml)')
     parser.add_argument('--destroy', action='store_true',
-                       help='Teardown all deployment infrastructure (S3 only for now). Prompts for confirmation.')
+                       help='Teardown all deployment infrastructure (S3 and Fargate). Prompts for confirmation.')
+    parser.add_argument('--build-only', action='store_true',
+                       help='Only build the Docker image; do not push to ECR or deploy.')
     
     args = parser.parse_args()
     
@@ -84,10 +86,14 @@ def main():
         print("Error: --destroy is only supported for platform: s3 or fargate")
         sys.exit(1)
     
+    if args.build_only and platform != 'fargate':
+        print("Error: --build-only is only supported for platform: fargate")
+        sys.exit(1)
+    
     # Route to appropriate deployment module
     if platform == 'fargate':
         from aws.main import main as aws_main
-        aws_main(config_file=config_path, destroy_infra=args.destroy)
+        aws_main(config_file=config_path, destroy_infra=args.destroy, build_only=args.build_only)
     elif platform == 'fly':
         from fly.main import main as fly_main
         fly_main(config_file=config_path)
