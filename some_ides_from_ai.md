@@ -1,3 +1,6 @@
+
+also: can we make this faster? I think it can be a lot faster than this.
+
 3. NEW: Validate Route53 Hosted Zone NS Delegation
 Files: aws/route53.py, aws/acm.py
 This was the root cause of our 15+ minute hang. The script creates DNS validation CNAME records in a Route53 hosted zone, but never checks whether that hosted zone is actually authoritative for the domain. If the domain registrar points to different nameservers (stale delegation from a deleted/recreated hosted zone), ACM will never see the validation records and validation hangs until timeout.
