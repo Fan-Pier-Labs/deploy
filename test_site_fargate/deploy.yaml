@@ -13,5 +13,5 @@ task:
   port: 8080
 public:
   domain: "fargatetest.fanpierlabs.com"
-  mode: "lightweight"  # single replica, direct to Fargate
+  mode: "production"  # single replica, direct to Fargate
 allow_create: true
