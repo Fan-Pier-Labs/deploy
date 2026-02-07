@@ -3,7 +3,7 @@
 
 PYTHON ?= python3
 PIP ?= pip
-CONFIG ?= test_site/deploy.yaml
+CONFIG_S3 ?= test_site_s3/deploy.yaml
 CONFIG_FARGATE ?= test_site_fargate/deploy.yaml
 
 .PHONY: install test test-mock test-mock-fargate check build-fargate deploy deploy-fargate
@@ -18,7 +18,7 @@ test: install
 
 # Run S3 deploy + destroy against mock boto3 (validates deploy/destroy flow)
 test-mock: install
-	$(PYTHON) run_deploy_mock.py $(CONFIG)
+	$(PYTHON) run_deploy_mock.py $(CONFIG_S3)
 
 # Run Fargate deploy + destroy against mock boto3 (no Docker build; validates flow)
 test-mock-fargate: install
@@ -33,8 +33,8 @@ build-fargate: install
 	$(PYTHON) run_deploy_mock.py $(CONFIG_FARGATE)
 
 # Deploy the S3 test site to AWS (real deployment)
-deploy: install
-	$(PYTHON) main.py --config $(CONFIG)
+deploy-s3: install
+	$(PYTHON) main.py --config $(CONFIG_S3)
 
 # Deploy the Fargate test site to AWS (real deployment; requires Docker)
 deploy-fargate: install
