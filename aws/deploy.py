@@ -250,7 +250,10 @@ def deploy_production_public_app(session, config, subnet_ids, security_group_id,
             print(f"  Status: {cert_status}")
             
             if cert_status != 'ISSUED':
-                print(f"Warning: Certificate status is {cert_status}. It may not be ready for use.")
+                print(f"Waiting for certificate to become issued (current status: {cert_status})...")
+                if not acm.wait_for_certificate_validation(acm_client, cert_arn, timeout_minutes=30):
+                    print("Error: Certificate did not validate in time. Cannot set up CDN.")
+                    sys.exit(1)
             else:
                 print("Certificate is issued and ready to use!")
         except acm_client.exceptions.ResourceNotFoundException:
@@ -281,7 +284,10 @@ def deploy_production_public_app(session, config, subnet_ids, security_group_id,
             if cert_status == 'ISSUED':
                 print("Certificate is already issued and ready to use!")
             else:
-                print(f"Warning: Certificate status is {cert_status}. It may need manual validation.")
+                print(f"Waiting for certificate validation (current status: {cert_status})...")
+                if not acm.wait_for_certificate_validation(acm_client, cert_arn, timeout_minutes=30):
+                    print("Error: Certificate did not validate in time. Cannot set up CDN.")
+                    sys.exit(1)
     
     # Step 8: Create CloudFront distribution with certificate
     # Use ALB DNS name (without http://)
@@ -543,7 +549,7 @@ def deploy_to_fargate(config_dict=None, **kwargs):
         # Step 5: Handle public app deployment if configured
         load_balancer_config = None
         if public_config:
-            mode = public_config.get('mode', 'lightweight')
+            mode = public_config.get('mode', 'production')
             
             if mode == 'production':
                 # For production, set up ALB first, then create service with load balancer

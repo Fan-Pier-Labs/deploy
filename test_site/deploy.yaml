@@ -1,7 +1,7 @@
 platform: "s3"
 app_name: "deploytest-site"
 aws:
-  profile: "personal"
+  profile: "fanpierlabs"
   region: "us-east-2"
 s3:
   folder: "."

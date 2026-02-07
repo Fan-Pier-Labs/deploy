@@ -150,7 +150,10 @@ def deploy_to_s3(config_dict=None, **kwargs):
                     print(f"  Status: {cert_status}")
                     
                     if cert_status != 'ISSUED':
-                        print(f"Warning: Certificate status is {cert_status}. It may not be ready for use.")
+                        print(f"Waiting for certificate to become issued (current status: {cert_status})...")
+                        if not acm.wait_for_certificate_validation(acm_client, cert_arn, timeout_minutes=30):
+                            print("Error: Certificate did not validate in time. Cannot set up CDN.")
+                            sys.exit(1)
                     else:
                         print("Certificate is issued and ready to use!")
                 except acm_client.exceptions.ResourceNotFoundException:
@@ -181,7 +184,10 @@ def deploy_to_s3(config_dict=None, **kwargs):
                     if cert_status == 'ISSUED':
                         print("Certificate is already issued and ready to use!")
                     else:
-                        print(f"Warning: Certificate status is {cert_status}. It may need manual validation.")
+                        print(f"Waiting for certificate validation (current status: {cert_status})...")
+                        if not acm.wait_for_certificate_validation(acm_client, cert_arn, timeout_minutes=30):
+                            print("Error: Certificate did not validate in time. Cannot set up CDN.")
+                            sys.exit(1)
             
             # Step 5.2: Create CloudFront distribution pointing to S3
             print(f"\n=== Creating CloudFront Distribution ===")
