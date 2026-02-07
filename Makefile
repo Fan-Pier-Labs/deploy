@@ -38,4 +38,8 @@ deploy-s3: install
 
 # Deploy the Fargate test site to AWS (real deployment; requires Docker)
 deploy-fargate: install
-	$(PYTHON) main.py --config $(CONFIG_FARGATE)
+	$(PYTHON) main.py --config $(CONFIG_FARGATE) 
+
+# Deploy the Fargate test site to AWS (real deployment; requires Docker)
+deploy-fargate-build-only: install
+	$(PYTHON) main.py --config $(CONFIG_FARGATE) --build-only

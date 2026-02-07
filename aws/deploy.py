@@ -172,7 +172,7 @@ def deploy_lightweight_public_app(session, config, subnet_ids, security_group_id
 def deploy_production_public_app(session, config, subnet_ids, security_group_id, vpc_id,
                                  task_definition_arn, cluster_name, service_name,
                                  desired_count, use_spot, allow_create, region, account_id, port, profile,
-                                 certificate_id=None):
+                                 certificate_id=None, health_check_path='/api/health'):
     """
     Deploy a production-ready public app with CloudFront -> ALB -> Fargate.
     """
@@ -207,7 +207,7 @@ def deploy_production_public_app(session, config, subnet_ids, security_group_id,
     # Step 4: Create target group
     tg_arn = alb.create_target_group(
         elbv2_client, vpc_id, config['app_name'], 
-        port=port, health_check_path='/api/health', allow_create=allow_create
+        port=port, health_check_path=health_check_path, allow_create=allow_create
     )
     
     # Step 5: Create ALB listener
@@ -460,6 +460,7 @@ def deploy_to_fargate(config_dict=None, **kwargs):
     public_config = params.get('public')
     port = params.get('port', 8080)
     certificate_id = params.get('certificate_id')
+    health_check_path = params.get('health_check_path', '/api/health')
     
     print("Starting deployment to AWS Fargate...")
     
@@ -570,7 +571,7 @@ def deploy_to_fargate(config_dict=None, **kwargs):
                     session, params, subnet_ids, security_group_id, vpc_id,
                     task_definition_arn, cluster_name, service_name,
                     desired_count, use_spot, allow_create, region, account_id, port, profile,
-                    certificate_id=certificate_id
+                    certificate_id=certificate_id, health_check_path=health_check_path
                 )
         
         # Step 6: Create or update ECS service

@@ -1,6 +1,8 @@
 # Fargate test site - deploy from repo root: python main.py --config test_site_fargate/deploy.yaml
 platform: "fargate"
 app_name: "deploytest-fargate-site"
+# Static file server has no /api/health; use / so ALB health checks pass
+health_check_path: "/"
 aws:
   profile: "fanpierlabs"
   region: "us-east-2"

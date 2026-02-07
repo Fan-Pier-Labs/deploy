@@ -3,6 +3,31 @@
 ECS cluster, service, and task definition management.
 """
 import sys
+import time
+
+
+def _wait_for_cluster_active(ecs_client, cluster_name, max_attempts=30, delay_seconds=10):
+    """Poll until cluster exists and is ACTIVE or INACTIVE so we can create/update the service.
+    INACTIVE (e.g. empty cluster with 0 services) is accepted; creating a service will use the cluster."""
+    for attempt in range(max_attempts):
+        resp = ecs_client.describe_clusters(clusters=[cluster_name])
+        clusters = resp.get('clusters') or []
+        if not clusters:
+            if attempt < max_attempts - 1:
+                print(f"Waiting for cluster {cluster_name} (attempt {attempt + 1}/{max_attempts})...")
+                time.sleep(delay_seconds)
+            continue
+        status = (clusters[0].get('status') or '').upper()
+        if status == 'ACTIVE':
+            return
+        if status == 'INACTIVE':
+            print(f"Cluster {cluster_name} is INACTIVE (no services yet). Proceeding to create service.")
+            return
+        if attempt < max_attempts - 1:
+            print(f"Waiting for cluster {cluster_name} to become ACTIVE (attempt {attempt + 1}/{max_attempts})...")
+            time.sleep(delay_seconds)
+    print(f"Cluster {cluster_name} did not become ACTIVE in time.")
+    sys.exit(1)
 
 
 def ensure_cluster(ecs_client, cluster_name, allow_create=False):
@@ -21,7 +46,9 @@ def ensure_cluster(ecs_client, cluster_name, allow_create=False):
             
         ecs_client.create_cluster(clusterName=cluster_name)
         print(f"Created ECS cluster: {cluster_name}")
-    
+
+    _wait_for_cluster_active(ecs_client, cluster_name)
+
     # Enable Container Insights with enhanced observability
     ecs_client.put_cluster_capacity_providers(
         cluster=cluster_name,

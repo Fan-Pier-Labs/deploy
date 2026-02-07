@@ -179,8 +179,19 @@ def _make_fargate_mock_session(region="us-east-2", account_id="123456789012"):
             paginator = MagicMock()
             paginator.paginate.return_value = []
             exc = type("Exceptions", (), {"ClusterNotFoundException": ClientError, "ServiceNotFoundException": ClientError})()
+            # First describe_clusters: no cluster (trigger create). Then return ACTIVE so wait exits.
+            describe_clusters_responses = [
+                {"clusters": []},
+                {"clusters": [{"clusterName": "deploytest-fargate-site-cluster", "status": "ACTIVE"}]},
+            ]
+
+            def describe_clusters(*a, **kw):
+                if len(describe_clusters_responses) > 1:
+                    return describe_clusters_responses.pop(0)
+                return describe_clusters_responses[0]
+
             return StrictClient("ecs", {
-                "describe_clusters": lambda *a, **kw: {"clusters": []},
+                "describe_clusters": describe_clusters,
                 "create_cluster": lambda *a, **kw: {},
                 "put_cluster_capacity_providers": lambda *a, **kw: {},
                 "update_cluster_settings": lambda *a, **kw: {},
