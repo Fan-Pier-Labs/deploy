@@ -6,6 +6,21 @@ import sys
 import time
 
 
+def get_distribution_id_by_domain(cloudfront_client, domain):
+    """
+    Return the CloudFront distribution ID for the given domain alias, or None if not found.
+    """
+    try:
+        paginator = cloudfront_client.get_paginator('list_distributions')
+        for page in paginator.paginate():
+            for dist in page.get('DistributionList', {}).get('Items', []):
+                if domain in dist.get('Aliases', {}).get('Items', []):
+                    return dist['Id']
+    except Exception as e:
+        print(f"Note: Could not list CloudFront distributions: {e}")
+    return None
+
+
 def create_cloudfront_distribution_for_s3(cloudfront_client, s3_bucket_name, s3_region, domain, region, allow_create=False, certificate_arn=None):
     """
     Create a CloudFront distribution that points to an S3 bucket.

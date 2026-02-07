@@ -28,7 +28,7 @@ def _platform_from_config(path):
     return (cfg.get("platform") or "s3").lower()
 
 
-# --- Fargate mock ---
+# --- Fargate mock: strict AWS mock so real boto3 is never called ---
 
 try:
     from botocore.exceptions import ClientError
@@ -39,16 +39,65 @@ except ImportError:
             self.operation_name = operation_name
 
 
+def _strict_error(what):
+    """Raise and exit so real boto3 is never used in tests."""
+    msg = f"Real boto3 must not be called in tests. {what}"
+    raise AssertionError(msg)
+
+
+def _raise_when_called(exc):
+    """Return a callable that raises exc when called (for mock client methods that must raise)."""
+    def raiser(*args, **kwargs):
+        raise exc
+    return raiser
+
+
+class StrictClient:
+    """Client that only allows explicitly defined methods; any other access raises and exits."""
+
+    def __init__(self, service_name, allowed):
+        self._service = service_name
+        self._allowed = dict(allowed)
+
+    def __getattr__(self, name):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        if name not in self._allowed:
+            _strict_error(f"Unexpected: client('{self._service}').{name}()")
+        return self._allowed[name]
+
+
+class StrictSession:
+    """Session that only allows .client(name) and .region_name; any other access raises."""
+
+    def __init__(self, client_fn, region_name):
+        self._client_fn = client_fn
+        self.region_name = region_name
+
+    def client(self, name):
+        return self._client_fn(name)
+
+    def __getattr__(self, name):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        _strict_error(f"Unexpected: Session.{name}")
+
+
 def _make_fargate_mock_session(region="us-east-2", account_id="123456789012"):
-    """Build a mock boto3 Session that returns mock clients for Fargate deploy + destroy."""
-    session = MagicMock()
-    session.region_name = region
-
+    """Build a strict mock boto3 Session: only defined clients/methods allowed; real boto3 never used."""
     # Stateful Route53 records so deploy-created A records exist during teardown
-    route53_records = {}  # hosted_zone_id -> list of ResourceRecordSet dicts
+    route53_records = {}
+    _mock_zone_ns_record = {
+        "Name": "fanpierlabs.com.",
+        "Type": "NS",
+        "ResourceRecords": [{"Value": "ns-1.awsdns-1.com."}, {"Value": "ns-2.awsdns-2.com."}],
+        "TTL": 172800,
+    }
 
-    def route53_list_resource_record_sets(HostedZoneId, StartRecordName=None, StartRecordType=None, MaxItems="1", **kwargs):
+    def route53_list(HostedZoneId, StartRecordName=None, StartRecordType=None, MaxItems="1", **kwargs):
         records = list(route53_records.get(HostedZoneId, []))
+        if HostedZoneId == "/hostedzone/ZMOCK" and StartRecordType == "NS":
+            records = [_mock_zone_ns_record] + records
         if StartRecordName is not None:
             sn = StartRecordName.rstrip(".")
             records = [r for r in records if r["Name"].rstrip(".") == sn]
@@ -57,7 +106,7 @@ def _make_fargate_mock_session(region="us-east-2", account_id="123456789012"):
         n = int(MaxItems) if isinstance(MaxItems, str) else (MaxItems or 1)
         return {"ResourceRecordSets": records[:n]}
 
-    def route53_change_resource_record_sets(HostedZoneId, ChangeBatch=None, **kwargs):
+    def route53_change(HostedZoneId, ChangeBatch=None, **kwargs):
         for change in (ChangeBatch or {}).get("Changes", []):
             action = change["Action"]
             rrset = change["ResourceRecordSet"]
@@ -78,126 +127,154 @@ def _make_fargate_mock_session(region="us-east-2", account_id="123456789012"):
         return {}
 
     def client(name):
-        m = MagicMock()
         if name == "sts":
-            m.get_caller_identity.return_value = {"Account": account_id}
-            return m
+            return StrictClient("sts", {
+                "get_caller_identity": lambda **kw: {"Account": account_id},
+            })
         if name == "ec2":
-            m.describe_vpcs.return_value = {"Vpcs": [{"VpcId": "vpc-mock"}]}
-            m.describe_subnets.return_value = {"Subnets": [{"SubnetId": "subnet-1"}, {"SubnetId": "subnet-2"}]}
-            m.describe_security_groups.return_value = {"SecurityGroups": []}
-            m.create_security_group.return_value = {"GroupId": "sg-mock"}
-            m.authorize_security_group_ingress.return_value = {}
-            # lightweight path: describe by GroupIds, then describe_network_interfaces
-            m.describe_security_groups.side_effect = lambda **kw: (
-                {"SecurityGroups": [{"GroupId": "sg-mock", "IpPermissions": []}]}
-                if kw.get("GroupIds") else {"SecurityGroups": []}
-            )
-            m.describe_network_interfaces.return_value = {
-                "NetworkInterfaces": [{"Association": {"PublicIp": "1.2.3.4"}}]
-            }
-            m.exceptions = type("Exceptions", (), {"ClientError": ClientError})()
-            return m
+            return StrictClient("ec2", {
+                "describe_vpcs": lambda **kw: {"Vpcs": [{"VpcId": "vpc-mock"}]},
+                "describe_subnets": lambda **kw: {"Subnets": [{"SubnetId": "subnet-1"}, {"SubnetId": "subnet-2"}]},
+                "describe_security_groups": lambda **kw: (
+                    {"SecurityGroups": [{"GroupId": "sg-mock", "IpPermissions": []}]}
+                    if kw.get("GroupIds") else {"SecurityGroups": []}
+                ),
+                "create_security_group": lambda **kw: {"GroupId": "sg-mock"},
+                "authorize_security_group_ingress": lambda **kw: {},
+                "describe_network_interfaces": lambda **kw: {"NetworkInterfaces": [{"Association": {"PublicIp": "1.2.3.4"}}]},
+                "delete_security_group": lambda **kw: {},
+                "exceptions": type("Exceptions", (), {"ClientError": ClientError})(),
+            })
         if name == "iam":
-            m.exceptions = type("Exceptions", (), {"NoSuchEntityException": ClientError})()
-            m.get_role.side_effect = m.exceptions.NoSuchEntityException({}, "GetRole")
-            m.create_role.return_value = {"Role": {"Arn": "arn:aws:iam::123456789012:role/ecsTaskExecutionRole"}}
-            m.list_attached_role_policies.return_value = {"AttachedPolicies": []}
-            m.attach_role_policy.return_value = {}
-            m.put_role_policy.return_value = {}
-            m.get_role_policy.side_effect = m.exceptions.NoSuchEntityException({}, "GetRolePolicy")
-            m.delete_role_policy.return_value = {}
-            return m
+            exc_ns = type("Exceptions", (), {"NoSuchEntityException": ClientError})()
+            no_such_entity = ClientError({"Error": {"Code": "NoSuchEntity"}}, "GetRole")
+            return StrictClient("iam", {
+                "get_role": _raise_when_called(no_such_entity),
+                "create_role": lambda **kw: {"Role": {"Arn": "arn:aws:iam::123456789012:role/ecsTaskExecutionRole"}},
+                "list_attached_role_policies": lambda **kw: {"AttachedPolicies": []},
+                "attach_role_policy": lambda **kw: {},
+                "put_role_policy": lambda **kw: {},
+                "get_role_policy": _raise_when_called(ClientError({"Error": {"Code": "NoSuchEntity"}}, "GetRolePolicy")),
+                "delete_role_policy": lambda **kw: {},
+                "exceptions": exc_ns,
+            })
         if name == "logs":
-            m.describe_log_groups.return_value = {"logGroups": []}
-            m.create_log_group.return_value = {}
-            m.put_retention_policy.return_value = {}
-            m.put_resource_policy.return_value = {}
-            m.exceptions = type("Exceptions", (), {"ResourceAlreadyExistsException": ClientError})()
-            return m
+            return StrictClient("logs", {
+                "describe_log_groups": lambda **kw: {"logGroups": []},
+                "create_log_group": lambda **kw: {},
+                "put_retention_policy": lambda **kw: {},
+                "put_resource_policy": lambda **kw: {},
+                "filter_log_events": lambda **kw: {"events": []},
+                "exceptions": type("Exceptions", (), {"ResourceAlreadyExistsException": ClientError})(),
+            })
         if name == "ecr":
-            m.exceptions = type("Exceptions", (), {"RepositoryNotFoundException": ClientError})()
-            m.describe_repositories.side_effect = m.exceptions.RepositoryNotFoundException({}, "DescribeRepositories")
-            m.create_repository.return_value = {}
-            m.delete_repository.return_value = {}
-            return m
+            exc_ns = type("Exceptions", (), {"RepositoryNotFoundException": ClientError})()
+            return StrictClient("ecr", {
+                "describe_repositories": _raise_when_called(ClientError({"Error": {"Code": "RepositoryNotFoundException"}}, "DescribeRepositories")),
+                "create_repository": lambda **kw: {},
+                "delete_repository": lambda **kw: {},
+                "exceptions": exc_ns,
+            })
         if name == "ecs":
-            m.describe_clusters.return_value = {"clusters": []}
-            m.create_cluster.return_value = {}
-            m.put_cluster_capacity_providers.return_value = {}
-            m.update_cluster_settings.return_value = {}
-            m.register_task_definition.return_value = {
-                "taskDefinition": {"taskDefinitionArn": "arn:aws:ecs:us-east-2:123456789012:task-definition/deploytest-fargate-site-task:1"}
-            }
-            m.describe_services.return_value = {
-                "services": [{"status": "RUNNING", "serviceName": "deploytest-fargate-site-service"}]
-            }
-            m.list_tasks.return_value = {"taskArns": ["arn:aws:ecs:us-east-2:123456789012:task/abc"]}
-            m.describe_tasks.return_value = {
-                "tasks": [{
-                    "lastStatus": "RUNNING",
-                    "attachments": [{
-                        "type": "ElasticNetworkInterface",
-                        "details": [
-                            {"name": "networkInterfaceId", "value": "eni-mock"},
-                            {"name": "publicIPv4Address", "value": "1.2.3.4"},
-                        ],
-                    }],
-                }]
-            }
-            m.create_service.return_value = {"service": {"serviceName": "x"}}
-            m.update_service.return_value = {"service": {"serviceName": "x"}}
-            m.delete_service.return_value = {}
             paginator = MagicMock()
-            paginator.paginate.return_value = []  # list_task_definitions
-            m.get_paginator.return_value = paginator
-            m.exceptions = type("Exceptions", (), {
-                "ClusterNotFoundException": ClientError,
-                "ServiceNotFoundException": ClientError,
-            })()
-            return m
+            paginator.paginate.return_value = []
+            exc = type("Exceptions", (), {"ClusterNotFoundException": ClientError, "ServiceNotFoundException": ClientError})()
+            return StrictClient("ecs", {
+                "describe_clusters": lambda *a, **kw: {"clusters": []},
+                "create_cluster": lambda *a, **kw: {},
+                "put_cluster_capacity_providers": lambda *a, **kw: {},
+                "update_cluster_settings": lambda *a, **kw: {},
+                "register_task_definition": lambda *a, **kw: {
+                    "taskDefinition": {"taskDefinitionArn": "arn:aws:ecs:us-east-2:123456789012:task-definition/deploytest-fargate-site-task:1"}
+                },
+                "describe_services": lambda *a, **kw: {"services": [{"status": "RUNNING", "serviceName": "deploytest-fargate-site-service"}]},
+                "list_tasks": lambda *a, **kw: {"taskArns": ["arn:aws:ecs:us-east-2:123456789012:task/abc"]},
+                "describe_tasks": lambda *a, **kw: {
+                    "tasks": [{
+                        "lastStatus": "RUNNING",
+                        "attachments": [{
+                            "type": "ElasticNetworkInterface",
+                            "details": [
+                                {"name": "networkInterfaceId", "value": "eni-mock"},
+                                {"name": "publicIPv4Address", "value": "1.2.3.4"},
+                            ],
+                        }],
+                    }]
+                },
+                "create_service": lambda *a, **kw: {"service": {"serviceName": "x"}},
+                "update_service": lambda *a, **kw: {"service": {"serviceName": "x"}},
+                "delete_service": lambda *a, **kw: {},
+                "delete_cluster": lambda *a, **kw: {},
+                "deregister_task_definition": lambda *a, **kw: {},
+                "get_paginator": lambda *a, **kw: paginator,
+                "exceptions": exc,
+            })
         if name == "events":
-            m.exceptions = type("Exceptions", (), {"ResourceNotFoundException": ClientError})()
-            m.describe_rule.side_effect = m.exceptions.ResourceNotFoundException({"Error": {"Code": "ResourceNotFoundException"}}, "DescribeRule")
-            m.put_rule.return_value = {}
-            m.list_targets_by_rule.return_value = {"Targets": []}
-            m.put_targets.return_value = {}
-            m.remove_targets.return_value = {}
-            return m
+            exc_ns = type("Exceptions", (), {"ResourceNotFoundException": ClientError})()
+            return StrictClient("events", {
+                "describe_rule": _raise_when_called(ClientError({"Error": {"Code": "ResourceNotFoundException"}}, "DescribeRule")),
+                "put_rule": lambda **kw: {},
+                "list_targets_by_rule": lambda **kw: {"Targets": []},
+                "put_targets": lambda **kw: {},
+                "remove_targets": lambda **kw: {},
+                "exceptions": exc_ns,
+            })
         if name == "route53":
             paginator = MagicMock()
             paginator.paginate.return_value = [{"HostedZones": [{"Id": "/hostedzone/ZMOCK", "Name": "fanpierlabs.com."}]}]
-            m.get_paginator.return_value = paginator
-            m.list_resource_record_sets.side_effect = route53_list_resource_record_sets
-            m.change_resource_record_sets.side_effect = route53_change_resource_record_sets
-            m.create_hosted_zone.return_value = {"DelegationSet": {"NameServers": ["ns-1.awsdns-1.com"]}}
-            return m
+            return StrictClient("route53", {
+                "get_paginator": lambda *a, **kw: paginator,
+                "list_resource_record_sets": route53_list,
+                "change_resource_record_sets": route53_change,
+                "create_hosted_zone": lambda *a, **kw: {"DelegationSet": {"NameServers": ["ns-1.awsdns-1.com"]}},
+            })
         if name == "cloudfront":
             paginator = MagicMock()
             paginator.paginate.return_value = [{"DistributionList": {"Items": []}}]
-            m.get_paginator.return_value = paginator
-            m.get_distribution_config.return_value = {"ETag": "E1", "DistributionConfig": {"Enabled": True}}
-            m.update_distribution.return_value = {}
-            m.delete_distribution.return_value = {}
-            m.get_distribution.return_value = {"Distribution": {"Status": "Deployed"}}
-            return m
+            return StrictClient("cloudfront", {
+                "get_paginator": lambda *a, **kw: paginator,
+                "get_distribution_config": lambda **kw: {"ETag": "E1", "DistributionConfig": {"Enabled": True}},
+                "update_distribution": lambda **kw: {},
+                "delete_distribution": lambda **kw: {},
+                "get_distribution": lambda **kw: {"Distribution": {"Status": "Deployed"}},
+                "create_distribution": lambda **kw: {"Distribution": {"Id": "E1", "DomainName": "d123.cloudfront.net"}},
+                "create_invalidation": lambda **kw: {"Invalidation": {"Id": "I1", "Status": "Completed"}},
+            })
         if name == "elbv2":
-            m.describe_load_balancers.return_value = {"LoadBalancers": []}
-            m.describe_listeners.return_value = {"Listeners": []}
-            m.describe_target_groups.return_value = {"TargetGroups": []}
-            m.exceptions = type("Exceptions", (), {
-                "LoadBalancerNotFoundException": ClientError,
-                "TargetGroupNotFoundException": ClientError,
-            })()
-            return m
-        return MagicMock()
+            exc = type("Exceptions", (), {"LoadBalancerNotFoundException": ClientError, "TargetGroupNotFoundException": ClientError})()
+            waiter = type("Waiter", (), {"wait": lambda self, **kw: None})()
+            return StrictClient("elbv2", {
+                "describe_load_balancers": lambda **kw: {"LoadBalancers": []},
+                "describe_listeners": lambda **kw: {"Listeners": []},
+                "describe_target_groups": lambda **kw: {"TargetGroups": []},
+                "create_load_balancer": lambda **kw: {"LoadBalancers": [{"LoadBalancerArn": "arn:alb", "DNSName": "alb-mock.example.com"}]},
+                "create_target_group": lambda **kw: {"TargetGroups": [{"TargetGroupArn": "arn:tg"}]},
+                "create_listener": lambda **kw: {"Listeners": [{"ListenerArn": "arn:listener"}]},
+                "get_waiter": lambda *a, **kw: waiter,
+                "modify_target_group": lambda **kw: {},
+                "describe_target_health": lambda **kw: {"TargetHealthDescriptions": []},
+                "describe_services": lambda **kw: {"services": [{"status": "ACTIVE"}]},
+                "delete_listener": lambda **kw: {},
+                "delete_load_balancer": lambda **kw: {},
+                "delete_target_group": lambda **kw: {},
+                "exceptions": exc,
+            })
+        if name == "acm":
+            acm_paginator = MagicMock()
+            acm_paginator.paginate.return_value = []
+            return StrictClient("acm", {
+                "request_certificate": lambda *a, **kw: {"CertificateArn": "arn:aws:acm:us-east-1:123456789012:certificate/mock-1"},
+                "describe_certificate": lambda *a, **kw: {"Certificate": {"Status": "ISSUED", "DomainName": "*.fanpierlabs.com"}},
+                "get_paginator": lambda *a, **kw: acm_paginator,
+                "exceptions": type("Exceptions", (), {"ResourceNotFoundException": ClientError})(),
+            })
+        _strict_error(f"Unexpected: client('{name}')")
 
-    session.client = client
-    return session
+    return StrictSession(client, region)
 
 
 def run_fargate_mock(config_path):
-    """Run Fargate deploy + destroy with mocked boto3 and no real Docker build."""
+    """Run Fargate deploy + destroy with all AWS mocked (strict: real boto3 never called)."""
     from aws.config import load_config
     from aws.deploy import deploy_to_fargate
     from aws.destroy import destroy_fargate_infra
@@ -208,27 +285,31 @@ def run_fargate_mock(config_path):
     mock_session = _make_fargate_mock_session(
         region=config_dict.get("region", "us-east-2"),
     )
-
     fake_image = "123456789012.dkr.ecr.us-east-2.amazonaws.com/deploytest-fargate-site:latest-mock"
+    mock_ns = ["ns-1.awsdns-1.com", "ns-2.awsdns-2.com"]
 
-    # ---- Phase 1: Deploy ----
-    print("\n" + "=" * 60)
-    print("PHASE 1: FARGATE DEPLOY (mock)")
-    print("=" * 60)
-    with patch("aws.deploy.boto3.Session", return_value=mock_session):
+    # Single patch: all boto3.Session() calls (deploy, destroy, ecr, etc.) use our strict mock.
+    # Any unmocked client or method raises AssertionError so real boto3 is never used.
+    with patch("boto3.Session", return_value=mock_session):
+        # ---- Phase 1: Deploy ----
+        print("\n" + "=" * 60)
+        print("PHASE 1: FARGATE DEPLOY (mock)")
+        print("=" * 60)
         with patch("aws.ecr.build_and_push_image", return_value=fake_image):
             with patch("aws.cloudfront.wait_for_cloudfront_deployment", return_value=True):
-                with patch("aws.deploy.time.sleep", return_value=None):  # avoid wait loops in lightweight path
-                    with patch("aws.deploy.test_deployment_http_requests", MagicMock()):  # skip real HTTP test in mock
-                        deploy_to_fargate(config_dict=config_dict)
+                with patch("aws.acm.wait_for_certificate_validation", return_value=True):
+                    with patch("aws.deploy.time.sleep", return_value=None):
+                        with patch("aws.deploy.test_deployment_http_requests", MagicMock()):
+                            with patch("aws.logs.tail_ecs_logs", MagicMock()):
+                                with patch("aws.route53.get_public_ns_for_domain", return_value=mock_ns):
+                                    deploy_to_fargate(config_dict=config_dict)
 
-    # ---- Phase 2: Destroy ----
-    print("\n" + "=" * 60)
-    print("PHASE 2: FARGATE DESTROY (mock)")
-    print("=" * 60)
-    with patch("aws.destroy.boto3.Session", return_value=mock_session):
+        # ---- Phase 2: Destroy ----
+        print("\n" + "=" * 60)
+        print("PHASE 2: FARGATE DESTROY (mock)")
+        print("=" * 60)
         with patch("aws.cloudfront.wait_for_cloudfront_deployment", return_value=True):
-            with patch("aws.destroy.time.sleep", return_value=None):  # avoid wait in destroy
+            with patch("aws.destroy.time.sleep", return_value=None):
                 destroy_fargate_infra(config_dict, confirm_callback=lambda _: True)
 
     print("\n" + "=" * 60)

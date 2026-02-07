@@ -306,6 +306,12 @@ class MockCloudFrontClient:
         self._invalidations.append({"Id": inv_id, "DistributionId": DistributionId, "Paths": InvalidationBatch.get("Paths", {}).get("Items", [])})
         return {"Invalidation": {"Id": inv_id, "Status": "InProgress"}}
 
+    def get_invalidation(self, DistributionId=None, Id=None):
+        for inv in self._invalidations:
+            if inv["Id"] == Id and inv["DistributionId"] == DistributionId:
+                return {"Invalidation": {"Id": Id, "Status": "Completed"}}
+        raise _client_error("NoSuchInvalidation", "Not found")
+
     def delete_distribution(self, Id=None, IfMatch=None):
         if Id not in self._distributions:
             raise _client_error("NoSuchDistribution", "Not found")

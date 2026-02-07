@@ -646,6 +646,10 @@ def deploy_to_fargate(config_dict=None, **kwargs):
         
         print("\n" + "="*80 + "\n")
         
+        # Tail ECS logs for new deploy (up to 20 events or 1 minute)
+        log_group_name = f"/ecs/{app_name}"
+        logs.tail_ecs_logs(logs_client, log_group_name, max_events=20, timeout_seconds=60)
+        
         # Test HTTP requests to verify deployment
         if public_config:
             test_deployment_http_requests(public_config, params)

@@ -251,9 +251,41 @@ def invalidate_cloudfront_cache(cloudfront_client, distribution_id, paths=None):
         
         print(f"✓ Cache invalidation created: {invalidation_id}")
         print(f"  Status: {status}")
-        print(f"  Note: Invalidation typically completes within 1-2 minutes")
         
         return invalidation_id
     except Exception as e:
         print(f"Error creating cache invalidation: {e}")
         raise
+
+
+def wait_for_invalidation(cloudfront_client, distribution_id, invalidation_id, timeout_seconds=180, poll_interval=10):
+    """
+    Wait until the CloudFront invalidation is complete.
+    
+    Args:
+        cloudfront_client: Boto3 CloudFront client
+        distribution_id: CloudFront distribution ID
+        invalidation_id: Invalidation request ID from create_invalidation
+        timeout_seconds: Max time to wait (default 3 minutes)
+        poll_interval: Seconds between status checks (default 10)
+    
+    Returns True if completed, False if timeout or error.
+    """
+    deadline = time.time() + timeout_seconds
+    try:
+        while time.time() < deadline:
+            resp = cloudfront_client.get_invalidation(
+                DistributionId=distribution_id,
+                Id=invalidation_id
+            )
+            status = resp['Invalidation'].get('Status', '')
+            if status == 'Completed':
+                print(f"  Invalidation {invalidation_id} completed.")
+                return True
+            print(f"  Waiting for invalidation... (status: {status}, checking again in {poll_interval}s)")
+            time.sleep(poll_interval)
+        print(f"  Warning: Invalidation did not complete within {timeout_seconds}s")
+        return False
+    except Exception as e:
+        print(f"  Warning: Could not check invalidation status: {e}")
+        return False
