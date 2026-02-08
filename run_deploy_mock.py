@@ -13,6 +13,7 @@ import yaml
 # Repo root
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from contextlib import contextmanager
 from unittest.mock import patch, MagicMock
 
 # Resolve config path
@@ -87,6 +88,8 @@ def _make_fargate_mock_session(region="us-east-2", account_id="123456789012"):
     """Build a strict mock boto3 Session: only defined clients/methods allowed; real boto3 never used."""
     # Stateful Route53 records so deploy-created A records exist during teardown
     route53_records = {}
+    # Stateful ECS clusters: shared across client("ecs") calls so delete_cluster keeps cluster INACTIVE for a bit
+    ecs_clusters = {}
     _mock_zone_ns_record = {
         "Name": "fanpierlabs.com.",
         "Type": "NS",
@@ -179,20 +182,37 @@ def _make_fargate_mock_session(region="us-east-2", account_id="123456789012"):
             paginator = MagicMock()
             paginator.paginate.return_value = []
             exc = type("Exceptions", (), {"ClusterNotFoundException": ClientError, "ServiceNotFoundException": ClientError})()
-            # First describe_clusters: no cluster (trigger create). Then return ACTIVE so wait exits.
-            describe_clusters_responses = [
-                {"clusters": []},
-                {"clusters": [{"clusterName": "deploytest-fargate-site-cluster", "status": "ACTIVE"}]},
-            ]
+            # Use session-scoped ecs_clusters so state persists across deploy -> destroy -> deploy
 
             def describe_clusters(*a, **kw):
-                if len(describe_clusters_responses) > 1:
-                    return describe_clusters_responses.pop(0)
-                return describe_clusters_responses[0]
+                names = kw.get("clusters", [])
+                result = []
+                for cn in names:
+                    if cn in ecs_clusters:
+                        entry = ecs_clusters[cn]
+                        result.append({"clusterName": cn, "status": entry["status"]})
+                        if entry.get("describe_until_gone", 0) > 0:
+                            entry["describe_until_gone"] -= 1
+                            if entry["describe_until_gone"] == 0:
+                                del ecs_clusters[cn]
+                return {"clusters": result}
+
+            def create_cluster(*a, **kw):
+                cn = kw.get("clusterName")
+                if cn:
+                    ecs_clusters[cn] = {"status": "ACTIVE", "describe_until_gone": 0}
+                return {}
+
+            def delete_cluster(*a, **kw):
+                cn = kw.get("cluster")
+                if cn and cn in ecs_clusters:
+                    ecs_clusters[cn]["status"] = "INACTIVE"
+                    ecs_clusters[cn]["describe_until_gone"] = 3  # stay visible as INACTIVE for 3 describe calls
+                return {}
 
             return StrictClient("ecs", {
                 "describe_clusters": describe_clusters,
-                "create_cluster": lambda *a, **kw: {},
+                "create_cluster": create_cluster,
                 "put_cluster_capacity_providers": lambda *a, **kw: {},
                 "update_cluster_settings": lambda *a, **kw: {},
                 "register_task_definition": lambda *a, **kw: {
@@ -215,7 +235,7 @@ def _make_fargate_mock_session(region="us-east-2", account_id="123456789012"):
                 "create_service": lambda *a, **kw: {"service": {"serviceName": "x"}},
                 "update_service": lambda *a, **kw: {"service": {"serviceName": "x"}},
                 "delete_service": lambda *a, **kw: {},
-                "delete_cluster": lambda *a, **kw: {},
+                "delete_cluster": delete_cluster,
                 "deregister_task_definition": lambda *a, **kw: {},
                 "get_paginator": lambda *a, **kw: paginator,
                 "exceptions": exc,
@@ -284,8 +304,115 @@ def _make_fargate_mock_session(region="us-east-2", account_id="123456789012"):
     return StrictSession(client, region)
 
 
+def _make_mock_aws_modules(fake_image, mock_ns, account_id="123456789012"):
+    """Build mock aws submodules so deploy/destroy never call real aws code. Any unmocked call errors."""
+    # Minimal boto3 session: no real AWS. client() returns mocks; sts.get_caller_identity returns account.
+    mock_sts = MagicMock()
+    mock_sts.get_caller_identity.return_value = {"Account": account_id}
+    mock_acm_client = MagicMock()
+    mock_acm_client.describe_certificate.return_value = {"Certificate": {"Status": "ISSUED", "DomainName": "*.fanpierlabs.com"}}
+    mock_acm_client.exceptions = type("Exceptions", (), {"ResourceNotFoundException": Exception})()
+    mock_session = MagicMock()
+    mock_session.region_name = "us-east-2"
+    def _client(name, **kw):
+        if name == "sts":
+            return mock_sts
+        if name == "acm":
+            return mock_acm_client
+        return MagicMock()
+    mock_session.client.side_effect = _client
+
+    # Mock aws submodules (only the functions deploy/destroy call; anything else would be real aws → error if we used strict)
+    mock_vpc = MagicMock()
+    mock_vpc.get_default_vpc_resources.return_value = (["subnet-1", "subnet-2"], "sg-mock", "vpc-mock")
+    mock_vpc.create_alb_security_group.return_value = "sg-mock"
+    mock_vpc.update_fargate_security_group_for_alb.return_value = None
+
+    mock_iam = MagicMock()
+    mock_iam.ensure_ecs_execution_role.return_value = f"arn:aws:iam::{account_id}:role/ecsTaskExecutionRole"
+
+    mock_logs = MagicMock()
+    mock_logs.ensure_cloudwatch_log_group.return_value = None
+    mock_logs.tail_ecs_logs.return_value = None
+
+    mock_events = MagicMock()
+    mock_events.enable_event_capture.return_value = None
+
+    mock_ecr = MagicMock()
+    mock_ecr.setup_ecr_repository.return_value = None
+    mock_ecr.build_and_push_image.return_value = fake_image
+
+    mock_ecs = MagicMock()
+    mock_ecs.ensure_cluster.return_value = None
+    mock_ecs.register_task_definition.return_value = f"arn:aws:ecs:us-east-2:{account_id}:task-definition/deploytest-fargate-site-task:1"
+    mock_ecs.create_or_update_service.return_value = {"service": {"serviceName": "deploytest-fargate-site-service"}}
+
+    mock_route53 = MagicMock()
+    mock_route53.ensure_domain_ready_for_dns.return_value = None
+    mock_route53.create_or_update_dns_record.return_value = None
+    mock_route53.create_validation_record.return_value = None
+    mock_route53.get_public_ns_for_domain.return_value = mock_ns
+    mock_route53.find_hosted_zone.return_value = ("/hostedzone/ZMOCK", "fargatetest", "fanpierlabs.com")
+    mock_route53.get_existing_record.return_value = None
+
+    mock_cloudfront = MagicMock()
+    mock_cloudfront.create_cloudfront_distribution.return_value = ("d123.cloudfront.net", "E1")
+    mock_cloudfront.wait_for_cloudfront_deployment.return_value = True
+    mock_cloudfront.invalidate_cloudfront_cache.return_value = None
+
+    mock_alb = MagicMock()
+    mock_alb.create_application_load_balancer.return_value = ("arn:alb", "alb-mock.example.com")
+    mock_alb.create_target_group.return_value = "arn:tg"
+    mock_alb.create_listener.return_value = None
+    mock_alb.wait_for_healthy_targets.return_value = None
+
+    mock_acm = MagicMock()
+    mock_acm.request_certificate.return_value = f"arn:aws:acm:us-east-1:{account_id}:certificate/mock-1"
+    mock_acm.get_certificate_validation_records.return_value = []
+    mock_acm.wait_for_certificate_validation.return_value = True
+
+    return {
+        "session": mock_session,
+        "vpc": mock_vpc,
+        "iam": mock_iam,
+        "logs": mock_logs,
+        "events": mock_events,
+        "ecr": mock_ecr,
+        "ecs": mock_ecs,
+        "route53": mock_route53,
+        "cloudfront": mock_cloudfront,
+        "alb": mock_alb,
+        "acm": mock_acm,
+    }
+
+
+@contextmanager
+def fargate_aws_mock(fake_image, mock_ns):
+    """
+    Single patch: mock out the whole aws package (and boto3) so no real AWS/network is used.
+    All boto3.Session() and aws.* calls go through mocks; if something isn't mocked, it would error.
+    """
+    mocks = _make_mock_aws_modules(fake_image, mock_ns)
+    with patch("boto3.Session", return_value=mocks["session"]), \
+         patch("time.sleep", return_value=None), \
+         patch("aws.deploy.vpc", mocks["vpc"]), \
+         patch("aws.deploy.iam", mocks["iam"]), \
+         patch("aws.deploy.logs", mocks["logs"]), \
+         patch("aws.deploy.events", mocks["events"]), \
+         patch("aws.deploy.ecr", mocks["ecr"]), \
+         patch("aws.deploy.ecs", mocks["ecs"]), \
+         patch("aws.deploy.route53", mocks["route53"]), \
+         patch("aws.deploy.cloudfront", mocks["cloudfront"]), \
+         patch("aws.deploy.alb", mocks["alb"]), \
+         patch("aws.deploy.acm", mocks["acm"]), \
+         patch("aws.deploy.test_deployment_http_requests", MagicMock()), \
+         patch("aws.destroy.route53", mocks["route53"]), \
+         patch("aws.destroy.cloudfront", mocks["cloudfront"]):
+        yield
+
+
 def run_fargate_mock(config_path):
-    """Run Fargate deploy + destroy with all AWS mocked (strict: real boto3 never called)."""
+    """Run Fargate deploy + destroy with aws (and boto3) fully mocked; no real network."""
     from aws.config import load_config
     from aws.deploy import deploy_to_fargate
     from aws.destroy import destroy_fargate_infra
@@ -293,38 +420,30 @@ def run_fargate_mock(config_path):
     config_dict = load_config(config_path)
     config_dict["_config_file"] = config_path
 
-    mock_session = _make_fargate_mock_session(
-        region=config_dict.get("region", "us-east-2"),
-    )
     fake_image = "123456789012.dkr.ecr.us-east-2.amazonaws.com/deploytest-fargate-site:latest-mock"
     mock_ns = ["ns-1.awsdns-1.com", "ns-2.awsdns-2.com"]
 
-    # Single patch: all boto3.Session() calls (deploy, destroy, ecr, etc.) use our strict mock.
-    # Any unmocked client or method raises AssertionError so real boto3 is never used.
-    with patch("boto3.Session", return_value=mock_session):
+    with fargate_aws_mock(fake_image, mock_ns):
         # ---- Phase 1: Deploy ----
         print("\n" + "=" * 60)
         print("PHASE 1: FARGATE DEPLOY (mock)")
         print("=" * 60)
-        with patch("aws.ecr.build_and_push_image", return_value=fake_image):
-            with patch("aws.cloudfront.wait_for_cloudfront_deployment", return_value=True):
-                with patch("aws.acm.wait_for_certificate_validation", return_value=True):
-                    with patch("aws.deploy.time.sleep", return_value=None):
-                        with patch("aws.deploy.test_deployment_http_requests", MagicMock()):
-                            with patch("aws.logs.tail_ecs_logs", MagicMock()):
-                                with patch("aws.route53.get_public_ns_for_domain", return_value=mock_ns):
-                                    deploy_to_fargate(config_dict=config_dict)
+        deploy_to_fargate(config_dict=config_dict)
 
         # ---- Phase 2: Destroy ----
         print("\n" + "=" * 60)
         print("PHASE 2: FARGATE DESTROY (mock)")
         print("=" * 60)
-        with patch("aws.cloudfront.wait_for_cloudfront_deployment", return_value=True):
-            with patch("aws.destroy.time.sleep", return_value=None):
-                destroy_fargate_infra(config_dict, confirm_callback=lambda _: True)
+        destroy_fargate_infra(config_dict, confirm_callback=lambda _: True)
+
+        # ---- Phase 3: Deploy again (cluster was INACTIVE for a bit after delete; then gone) ----
+        print("\n" + "=" * 60)
+        print("PHASE 3: FARGATE DEPLOY AGAIN (mock)")
+        print("=" * 60)
+        deploy_to_fargate(config_dict=config_dict)
 
     print("\n" + "=" * 60)
-    print("OK: Fargate deploy + destroy (mock) completed.")
+    print("OK: Fargate deploy + destroy + deploy (mock) completed.")
     print("=" * 60)
 
 

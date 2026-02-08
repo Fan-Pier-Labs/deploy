@@ -7,8 +7,7 @@ import time
 
 
 def _wait_for_cluster_active(ecs_client, cluster_name, max_attempts=30, delay_seconds=10):
-    """Poll until cluster exists and is ACTIVE or INACTIVE so we can create/update the service.
-    INACTIVE (e.g. empty cluster with 0 services) is accepted; creating a service will use the cluster."""
+    """Poll until cluster exists and is ACTIVE. CreateService does not work on INACTIVE clusters."""
     for attempt in range(max_attempts):
         resp = ecs_client.describe_clusters(clusters=[cluster_name])
         clusters = resp.get('clusters') or []
@@ -20,9 +19,6 @@ def _wait_for_cluster_active(ecs_client, cluster_name, max_attempts=30, delay_se
         status = (clusters[0].get('status') or '').upper()
         if status == 'ACTIVE':
             return
-        if status == 'INACTIVE':
-            print(f"Cluster {cluster_name} is INACTIVE (no services yet). Proceeding to create service.")
-            return
         if attempt < max_attempts - 1:
             print(f"Waiting for cluster {cluster_name} to become ACTIVE (attempt {attempt + 1}/{max_attempts})...")
             time.sleep(delay_seconds)
@@ -32,42 +28,58 @@ def _wait_for_cluster_active(ecs_client, cluster_name, max_attempts=30, delay_se
 
 def ensure_cluster(ecs_client, cluster_name, allow_create=False):
     """
-    Ensure ECS cluster exists.
+    Ensure ECS cluster exists and is ACTIVE.
+    CreateService fails with ClusterNotFoundException on INACTIVE clusters; if the cluster
+    exists but is INACTIVE (e.g. empty after all services were removed), we delete and recreate it.
     """
     clusters = ecs_client.describe_clusters(clusters=[cluster_name])
-    cluster_exists = bool(clusters['clusters'])
-    
+    cluster_list = clusters.get('clusters') or []
+    cluster_exists = bool(cluster_list)
+    status = (cluster_list[0].get('status') or '').upper() if cluster_list else ''
+
+    if cluster_exists and status == 'INACTIVE':
+        if not allow_create:
+            print(f"ECS cluster '{cluster_name}' is INACTIVE (CreateService cannot use it) and resource creation is disabled.")
+            sys.exit(1)
+        print(f"ECS cluster {cluster_name} is INACTIVE; deleting and recreating so CreateService can run.")
+        ecs_client.delete_cluster(cluster=cluster_name)
+        for _ in range(30):
+            time.sleep(2)
+            resp = ecs_client.describe_clusters(clusters=[cluster_name])
+            if not (resp.get('clusters') or []):
+                break
+        else:
+            print("Warning: cluster still present after delete wait; creating new cluster may fail.")
+        cluster_exists = False
+        cluster_list = []
+        status = ''
+
     if cluster_exists:
         print(f"ECS cluster {cluster_name} already exists")
     else:
         if not allow_create:
             print(f"ECS cluster '{cluster_name}' does not exist and resource creation is disabled.")
             sys.exit(1)
-            
         ecs_client.create_cluster(clusterName=cluster_name)
         print(f"Created ECS cluster: {cluster_name}")
 
     _wait_for_cluster_active(ecs_client, cluster_name)
 
-    # Enable Container Insights with enhanced observability
-    ecs_client.put_cluster_capacity_providers(
-        cluster=cluster_name,
-        capacityProviders=['FARGATE', 'FARGATE_SPOT'],
-        defaultCapacityProviderStrategy=[],
-    )
-    
-    cluster_settings = [
-        {
-            'name': 'containerInsights',
-            'value': 'enhanced'
-        },
-    ]
-    
-    ecs_client.update_cluster_settings(
-        cluster=cluster_name,
-        settings=cluster_settings
-    )
-    print(f"Enabled Container Insights with enhanced observability on cluster: {cluster_name}")
+    # PutClusterCapacityProviders and UpdateClusterSettings require cluster status ACTIVE.
+    resp = ecs_client.describe_clusters(clusters=[cluster_name])
+    clusters = resp.get('clusters') or []
+    status = (clusters[0].get('status') or '').upper() if clusters else ''
+    if status != 'ACTIVE':
+        print(f"Cluster {cluster_name} is {status}; skipping capacity providers/settings (requires ACTIVE).")
+    else:
+        ecs_client.put_cluster_capacity_providers(
+            cluster=cluster_name,
+            capacityProviders=['FARGATE', 'FARGATE_SPOT'],
+            defaultCapacityProviderStrategy=[],
+        )
+        cluster_settings = [{'name': 'containerInsights', 'value': 'enhanced'}]
+        ecs_client.update_cluster_settings(cluster=cluster_name, settings=cluster_settings)
+        print(f"Enabled Container Insights with enhanced observability on cluster: {cluster_name}")
 
 
 def register_task_definition(ecs_client, task_family, image_name, app_name, region, 

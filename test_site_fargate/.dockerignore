@@ -1,0 +1,18 @@
+# Buildx cache (created in this dir when building from here) — do not send as context
+.buildx-cache-amd64
+.buildx-cache-*
+
+# Git and IDE
+.git
+.gitignore
+*.swp
+.DS_Store
+
+# Dependencies (if you add any later)
+node_modules
+__pycache__
+*.pyc
+.venv
+venv
+.env
+.env.*
