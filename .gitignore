@@ -15,7 +15,6 @@ __pycache__/
 .mypy_cache/
 # Ignore virtual environment directories
 venv/
-.cursor
 
 .DS_Store
 
