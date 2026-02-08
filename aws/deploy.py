@@ -220,6 +220,9 @@ def deploy_production_public_app(session, config, subnet_ids, security_group_id,
         'containerPort': port
     }
     
+    # Store ALB DNS for direct testing (bypasses CloudFront/DNS)
+    config['_alb_domain'] = alb_dns
+    
     print(f"Load balancer configuration prepared:")
     print(f"  Target Group: {tg_arn}")
     print(f"  Container Name: {config['app_name']}")
@@ -342,17 +345,20 @@ def test_deployment_http_requests(public_config, params):
         print("\nWaiting 15 seconds for service to be ready...")
         time.sleep(15)
     
-    # Test URLs to try
+    # Test URLs to try (ALB first to distinguish ALB vs CloudFront/DNS issues)
     test_urls = []
+    if '_alb_domain' in params:
+        # Direct ALB (HTTP) - bypasses CloudFront and DNS
+        test_urls.append(f"http://{params['_alb_domain']}")
     if mode == 'production':
         # Try HTTPS first (production should use HTTPS)
         test_urls.append(f"https://{domain}")
         # Also try HTTP (might redirect)
         test_urls.append(f"http://{domain}")
     else:
-        # Lightweight mode - just HTTP
-        test_urls.append(f"http://{domain}")
-    
+        # Lightweight mode - just HTTP (when no ALB domain stored)
+        if not test_urls:
+            test_urls.append(f"http://{domain}")
     # Also test CloudFront domain if available
     if '_cloudfront_domain' in params:
         test_urls.append(f"https://{params['_cloudfront_domain']}")
