@@ -1,297 +1,178 @@
-# Unified Deployment Tool
+# AWS Deployment Tool (CloudFormation)
 
-A unified deployment tool that supports deploying applications to **AWS Fargate**, **Fly.io**, **Vercel**, or **AWS S3** from a single configuration file. This tool simplifies multi-platform deployments by providing a consistent interface and configuration format across different cloud providers.
+Deploy to **AWS S3** (static sites) or **AWS Fargate** (ECS) from a single YAML config. One command: **generate CloudFormation** from your config, then **deploy** via the AWS CLI. No local stack file unless you pass `--debug-save-stack-locally`.
 
 ## Features
 
-- **Multi-Platform Support**: Deploy to AWS Fargate, Fly.io, Vercel, or AWS S3 with a single tool
-- **YAML Configuration**: Simple, declarative configuration files
-- **Unified CLI**: Single entry point that routes to the appropriate platform
-- **Flexible Deployment Options**: Support for internal services, public web apps, and serverless deployments
-- **Environment Variables**: Easy configuration of environment variables via config file or CLI
-- **Resource Management**: Automatic creation and management of cloud resources (AWS only)
-
-## Installation
-
-Add the deploy tool to your `package.json` as a dev dependency:
-
-```json
-{
-  "devDependencies": {
-    "deploy": "https://github.com:Fan-Pier-Labs/deploy"
-  },
-  "scripts": {
-    "deploy": "python3 ./node_modules/deploy/main.py --config deploy.yaml"
-  }
-}
-```
-
-Then install dependencies:
-
-```bash
-bun install  # or npm install / yarn install
-```
+- **YAML config** → CloudFormation template generation → deploy in one command
+- **S3**: Static website + optional CloudFront + Route53
+- **Fargate**: ECS cluster, service, ALB, CloudFront, Route53 (no lightweight mode)
+- **Automatic ACM**: Find existing cert (exact or wildcard) or request + DNS validate via Route53 (Python/boto3)
+- **Post-deploy**: S3 sync; Docker build/push + ECR for Fargate
 
 ## Quick Start
 
-1. Create a `deploy.yaml` configuration file in your project directory:
+1. Create `deploy.yaml`:
 
 ```yaml
-platform: "fargate"  # or "fly", "vercel", or "s3"
+platform: "s3"   # or "fargate"
 app_name: "my-app"
-aws:
-  profile: "personal"
-  region: "us-east-2"
-task:
-  cpu: 1024
-  memory: 2048
-  replicas: 1
-environment:
-  NODE_ENV: "production"
-```
-
-2. Run the deployment:
-
-```bash
-bun run deploy
-```
-
-## Configuration
-
-The tool uses YAML configuration files to define deployment settings. The `platform` field determines which deployment module is used.
-
-### Platform Options
-
-- `fargate`: Deploy to AWS Fargate (containerized workloads)
-- `fly`: Deploy to Fly.io (containerized workloads)
-- `vercel`: Deploy to Vercel (serverless/edge functions)
-- `s3`: Deploy static websites to AWS S3 with CloudFront
-
-### Common Configuration Fields
-
-```yaml
-platform: "fargate"  # Required: "fargate", "fly", "vercel", or "s3"
-app_name: "my-app"   # Required: Application name
-environment:         # Optional: Environment variables
-  KEY1: "value1"
-  KEY2: "value2"
-```
-
-## Platform-Specific Configuration
-
-### AWS Fargate
-
-Deploy containerized applications to AWS Fargate with support for both internal services and public-facing web applications.
-
-**Basic Configuration:**
-```yaml
-platform: "fargate"
-app_name: "my-app"
-aws:
-  profile: "personal"
-  region: "us-east-2"
-task:
-  cpu: 1024
-  memory: 2048
-  spot: true
-  replicas: 1
-  ephemeral_storage: 50
-allow_create: true
-```
-
-**Public Web Application (Production):**
-```yaml
-platform: "fargate"
-app_name: "my-app"
-public:
-  domain: "app.example.com"
-  mode: "production"  # Uses CloudFront + ALB
-task:
-  port: 8080
-  cpu: 1024
-  memory: 2048
-  replicas: 2
-aws:
-  region: "us-east-2"
-```
-
-**Public Web Application (Lightweight):**
-```yaml
-platform: "fargate"
-app_name: "my-app"
-public:
-  domain: "test.example.com"
-  mode: "lightweight"  # Direct to Fargate (ephemeral IPs)
-task:
-  replicas: 1  # Must be 1 for lightweight mode
-```
-
-**Features:**
-- Automatic VPC, subnet, and security group management
-- ECR repository creation and image pushing
-- ECS cluster, service, and task definition management
-- CloudWatch Logs integration
-- Route53 DNS management
-- CloudFront distribution (production mode)
-- Application Load Balancer (production mode)
-- Fargate Spot support for cost savings
-
-**Command-Line Options:**
-```bash
-bun run deploy -- --replicas 2 --cpu 2048 --memory 4096 \
-  --env NODE_ENV=production --env API_KEY=secret
-```
-
-### Fly.io
-
-Deploy containerized applications to Fly.io.
-
-**Configuration:**
-```yaml
-platform: "fly"
-app_name: "my-app"
-replicas: 2
-environment:
-  NODE_ENV: "production"
-```
-
-**Note:** Fly.io deployment does not currently support public domain configuration. Use `fargate` or `vercel` platforms for public domains.
-
-**Command-Line Options:**
-```bash
-bun run deploy -- --replicas 2 --env NODE_ENV=production
-```
-
-### Vercel
-
-Deploy serverless applications and edge functions to Vercel.
-
-**Configuration:**
-```yaml
-platform: "vercel"
-app_name: "my-app"
-vercel:
-  prod: true  # Deploy to production
-environment:
-  NODE_ENV: "production"
-```
-
-**Command-Line Options:**
-```bash
-bun run deploy -- --prod --yes --env NODE_ENV=production
-```
-
-### AWS S3
-
-Deploy static websites to AWS S3 with CloudFront distribution and Route53 DNS.
-
-**Configuration:**
-```yaml
-platform: "s3"
-app_name: "my-static-site"
 aws:
   profile: "personal"
   region: "us-east-2"
 s3:
-  folder: "./dist"  # Path to folder containing static files (must have index.html)
+  folder: "."
 public:
   domain: "app.example.com"
 allow_create: true
 ```
 
-**Features:**
-- Automatic S3 bucket creation and configuration
-- Static website hosting setup
-- CloudFront distribution with 10-minute cache
-- Route53 DNS management
-- SSL certificate management (ACM)
-- Validates that `index.html` exists in the folder
-
-**Requirements:**
-- The specified folder must contain an `index.html` file
-- Folder path can be relative (to config file) or absolute
-
-**Command-Line Options:**
-```bash
-bun run deploy -- --allow-create --region us-east-2
-```
-
-**Architecture:**
-- Route53 → CloudFront (10 min cache) → S3 Bucket
-
-## Usage
-
-### Basic Deployment
+2. Deploy:
 
 ```bash
-# Deploy using the npm/bun script (uses deploy.yaml by default)
-bun run deploy
-
-# Or run directly with a custom config file
-python3 ./node_modules/deploy/main.py --config my-config.yaml
+python3 main.py --config deploy.yaml
 ```
 
-### Platform-Specific Deployment
+## Platform Options
 
-You can also use the platform-specific modules directly:
+- **s3**: Static website in S3, optional CloudFront + Route53. Requires `s3.folder`; if `public.domain` is set, hosted zone and certificate are resolved automatically.
+- **fargate**: ECS Fargate service. Builds and pushes Docker image to ECR, then deploys stack. Public domain always uses CloudFront + ALB.
+
+## Configuration
+
+### Common
+
+```yaml
+platform: "s3" | "fargate"
+app_name: "my-app"
+aws:
+  profile: "personal"
+  region: "us-east-2"
+allow_create: true
+```
+
+### S3
+
+```yaml
+platform: "s3"
+app_name: "my-static-site"
+s3:
+  folder: "./dist"           # Path to static files (must have index.html)
+  bucket_name: "my-bucket"   # Optional; default derived from app_name
+public:
+  domain: "app.example.com"
+```
+
+### Fargate
+
+```yaml
+platform: "fargate"
+app_name: "my-app"
+aws:
+  profile: "personal"
+  region: "us-east-2"
+task:
+  cpu: 1024
+  memory: 2048
+  replicas: 1
+  spot: true
+  port: 8080
+  ephemeral_storage: 50
+  dockerfile: "Dockerfile"
+environment:
+  NODE_ENV: "production"
+public:
+  domain: "app.example.com"
+allow_create: true
+```
+
+## Public domain (S3 and Fargate)
+
+You only specify **`public.domain`** in `deploy.yaml`. The tool resolves the Route53 hosted zone from the domain and finds or requests the ACM certificate (us-east-1) automatically—including wildcard certs when they cover the domain. No `hosted_zone_id`, `certificate_id`, or `mode` in config.
+
+## How to deploy
+
+**Default (one command):** Generate the CloudFormation template (in memory / temp file) and deploy. No stack file is written to disk unless you pass `--debug-save-stack-locally`.
 
 ```bash
-# AWS Fargate
-python3 ./node_modules/deploy/aws/main.py --config deploy.yaml
-
-# Fly.io
-python3 ./node_modules/deploy/fly/main.py --config deploy.yaml
-
-# Vercel
-python3 ./node_modules/deploy/vercel/main.py --config deploy.yaml
+python3 main.py --config deploy.yaml
 ```
 
-## Project Structure
+**Debug: save the generated stack locally** while still deploying:
+
+```bash
+python3 main.py --config deploy.yaml --debug-save-stack-locally
+# or to a specific file:
+python3 main.py --config deploy.yaml --debug-save-stack-locally my-stack.yaml
+```
+
+**Two-step (generate, then deploy yourself):** Generate `stack.yaml` in the current directory, then deploy with the AWS CLI.
+
+```bash
+# 1. Generate stack.yaml (no deploy)
+python3 main.py --config deploy.yaml -o stack.yaml
+
+# 2. Deploy the stack (S3 example; pass parameters your config needs)
+aws cloudformation deploy \
+  --template-file stack.yaml \
+  --stack-name my-app-stack \
+  --capabilities CAPABILITY_IAM \
+  --parameter-overrides CertificateArn=arn:aws:acm:us-east-1:ACCOUNT:certificate/ID HostedZoneId=Z123...
+
+# For S3, then upload files and invalidate CDN:
+aws s3 sync ./dist s3://BUCKET_NAME/ --delete
+aws cloudfront create-invalidation --distribution-id DIST_ID --paths "/*"
+```
+
+For **Fargate** you must build/push the image first, then pass `ImageUri`, `VpcId`, and `SubnetIds` to `--parameter-overrides`.
+
+## CLI
+
+```bash
+# Deploy (generate template + deploy)
+python3 main.py --config deploy.yaml
+
+# Debug: save generated template to stack-debug.yaml (or named file) when deploying
+python3 main.py --config deploy.yaml --debug-save-stack-locally
+python3 main.py --config deploy.yaml --debug-save-stack-locally my-stack.yaml
+
+# Only generate CloudFormation (no deploy); write to file
+python3 main.py --config deploy.yaml -o stack.yaml
+python3 main.py --config deploy.yaml --no-deploy   # print to stdout
+
+# Custom stack name
+python3 main.py --config deploy.yaml --stack-name my-stack
+```
+
+## Generate template only
+
+```bash
+python3 -m cloudformation.generator --config deploy.yaml -o template.yaml
+```
+
+## Project structure
 
 ```
 deploy/
-├── main.py              # Unified entry point
-├── aws/                 # AWS Fargate deployment module
-│   ├── main.py
-│   ├── deploy.py
-│   ├── config.py
-│   ├── ecs.py
-│   ├── ecr.py
-│   ├── vpc.py
-│   ├── alb.py
-│   ├── cloudfront.py
-│   ├── route53.py
-│   └── ...
-├── fly/                 # Fly.io deployment module
-│   ├── main.py
-│   ├── deploy.py
-│   └── config.py
-├── vercel/              # Vercel deployment module
-│   ├── main.py
-│   ├── deploy.py
-│   └── config.py
-└── s3/                  # AWS S3 static website deployment module
-    ├── main.py
-    ├── deploy.py
-    ├── config.py
-    ├── s3_bucket.py
-    └── cloudfront_s3.py
+├── main.py                 # Entry: load YAML, generate CFN, deploy via AWS CLI
+├── cloudformation/         # Generate CloudFormation from YAML
+│   ├── generator.py
+│   ├── s3_template.py
+│   └── fargate_template.py
+├── cert_resolve.py         # ACM find/request + Route53 validation (boto3)
+├── aws/                    # Used by cert_resolve (acm, route53)
+└── s3/                     # Legacy (not used by main deploy)
 ```
 
 ## Requirements
 
-- Python 3.x
-- AWS CLI configured (for Fargate deployments)
-- Fly.io CLI installed and authenticated (for Fly deployments)
-- Vercel CLI installed and authenticated (for Vercel deployments)
-- Docker (for containerized deployments)
+- Python 3.x (PyYAML; boto3 for automatic ACM/Route53 when cert not provided)
+- AWS CLI installed and configured
+- Docker (for Fargate builds)
+- For public domains: only `public.domain` is required in config; hosted zone and certificate are resolved automatically.
 
 ## Notes
 
-- **Fly.io**: Public domain support is not available. Use `fargate` or `vercel` for public-facing applications.
-- **AWS Fargate Lightweight Mode**: Points directly to Fargate task IPs, which are ephemeral. DNS records may need updating on each deployment. For production, use `production` mode.
-- **AWS Fargate Production Mode**: Creates a full infrastructure stack with CloudFront, ALB, and Route53 for stable, production-ready deployments.
-
-## License
-
-[Add your license information here]
+- **Fargate**: Uses default VPC and first two subnets unless you pass them. Image is built and pushed to ECR before stack deploy.
+- **S3**: After stack deploy, files are synced with `aws s3 sync`. CloudFront cache is invalidated if a distribution exists.
+- **Teardown**: Delete the CloudFormation stack (`aws cloudformation delete-stack --stack-name <name>`) to remove all resources.
